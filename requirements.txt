@@ -5,7 +5,6 @@ streamlit==1.29.0
 beautifulsoup4==4.12.3
 lxml==5.1.0
 requests==2.31.0
-playwright==1.40.0
 
 # Data Processing
 pandas==2.1.4
@@ -17,8 +16,9 @@ scikit-learn==1.3.2
 # OpenAI
 openai==1.5.0
 
-# NLP
+# NLP - SpaCy con modello incluso
 spacy==3.7.2
+https://github.com/explosion/spacy-models/releases/download/it_core_news_sm-3.7.0/it_core_news_sm-3.7.0-py3-none-any.whl
 
 # Utilities
 python-dotenv==1.0.0
@@ -28,3 +28,12 @@ loguru==0.7.2
 
 # HTTP Client
 aiohttp==3.9.1
+```
+
+---
+
+## 📝 CREA FILE `packages.txt` (per Streamlit Cloud)
+
+Crea un nuovo file chiamato `packages.txt` nella root:
+```
+build-essential
