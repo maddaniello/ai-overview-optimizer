@@ -9,4 +9,5 @@ python-dotenv
 tenacity
 pydantic
 loguru
-spacy
+lxml
+aiohttp
