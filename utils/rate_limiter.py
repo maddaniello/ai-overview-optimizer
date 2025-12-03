@@ -4,7 +4,7 @@ Rate limiter per API calls
 import time
 from collections import deque
 from functools import wraps
-from utils.logger import logger
+from .logger import logger
 
 
 class RateLimiter:
