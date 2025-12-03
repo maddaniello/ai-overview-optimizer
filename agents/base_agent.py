@@ -72,6 +72,7 @@ class AgentState:
     ai_overview_sources: List[Dict] = field(default_factory=list)
     organic_results: List[Dict] = field(default_factory=list)
     fan_out_queries: List[str] = field(default_factory=list)
+    synthetic_reference: bool = False  # True se AI Overview è stato generato sinteticamente
 
     # Scraped Content
     target_content: str = ""

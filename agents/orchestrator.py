@@ -231,6 +231,11 @@ class OrchestratorAgent(BaseAgent):
             self.log("Nessun sistema di ranking disponibile", level="warning")
             return state
 
+        # Se non c'è AI Overview, genera un riferimento sintetico
+        if not state.ai_overview_text and state.competitor_contents:
+            self.log("AI Overview non disponibile - genero riferimento da competitor", level="warning")
+            state = await self._generate_synthetic_reference(state)
+
         try:
             # Prepara contenuti per ranking
             contents_to_rank = []
@@ -263,7 +268,8 @@ class OrchestratorAgent(BaseAgent):
                 return state
 
             # Calcola ranking usando embeddings
-            self.log(f"Calcolo similarità per {len(contents_to_rank)} contenuti...", level="info")
+            ref_type = "AI Overview" if state.ai_overview_text else "Riferimento sintetico"
+            self.log(f"Calcolo similarità per {len(contents_to_rank)} contenuti vs {ref_type}...", level="info")
             ranking = await self._calculate_ranking_embeddings(state, contents_to_rank)
 
             state.initial_ranking = ranking
@@ -271,7 +277,7 @@ class OrchestratorAgent(BaseAgent):
 
             # Log ranking
             self.log("=" * 40, level="info")
-            self.log("RANKING (similarità vs AI Overview):", level="info")
+            self.log(f"RANKING (similarità vs {ref_type}):", level="info")
             self.log("=" * 40, level="info")
 
             for item in ranking:
@@ -291,6 +297,51 @@ class OrchestratorAgent(BaseAgent):
             self.log(f"Errore calcolo ranking: {e}", level="error")
             import traceback
             self.log(traceback.format_exc(), level="error")
+
+        return state
+
+    async def _generate_synthetic_reference(self, state: AgentState) -> AgentState:
+        """Genera un riferimento sintetico quando AI Overview non è disponibile"""
+        self.log("Generazione riferimento sintetico basato sui competitor...", level="info")
+
+        try:
+            # Raccogli contenuto dai competitor
+            competitor_texts = []
+            for comp in state.competitor_contents[:3]:
+                preview = comp.get("response_preview", comp["content"][:500])
+                competitor_texts.append(preview)
+
+            combined_context = "\n\n---\n\n".join(competitor_texts)
+
+            prompt = f"""Basandoti sui contenuti dei competitor per la keyword "{state.keyword}", genera una risposta ideale che potrebbe apparire in un AI Overview di Google.
+
+CONTENUTI COMPETITOR:
+{combined_context[:2000]}
+
+Genera una risposta di 200-250 parole che:
+1. Sintetizzi le informazioni chiave dei competitor
+2. Risponda direttamente alla query "{state.keyword}"
+3. Sia strutturata in paragrafi fluidi
+4. Abbia tono informativo e autorevole
+
+Scrivi SOLO il testo della risposta:"""
+
+            result = self.llm_client.generate_with_reasoning(
+                prompt=prompt,
+                context="",
+                task_description="Generazione riferimento sintetico",
+                temperature=0.5
+            )
+
+            if result and result.get("answer"):
+                state.ai_overview_text = result["answer"]
+                state.synthetic_reference = True  # Flag per indicare che è sintetico
+                self.log(f"Riferimento sintetico generato: {len(state.ai_overview_text)} caratteri", level="success")
+            else:
+                self.log("Impossibile generare riferimento sintetico", level="error")
+
+        except Exception as e:
+            self.log(f"Errore generazione riferimento: {e}", level="error")
 
         return state
 

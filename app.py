@@ -270,7 +270,7 @@ def render_content_plan(plan: Dict):
         st.markdown(plan_text)
 
 
-def generate_pdf_report(state: AgentState) -> bytes:
+def generate_pdf_report(state: AgentState) -> Optional[bytes]:
     """Generate PDF report from results"""
     try:
         from fpdf import FPDF
@@ -278,6 +278,13 @@ def generate_pdf_report(state: AgentState) -> bytes:
         pdf = FPDF()
         pdf.add_page()
         pdf.set_auto_page_break(auto=True, margin=15)
+
+        def safe_text(text: str) -> str:
+            """Safely encode text for PDF"""
+            if not text:
+                return ""
+            # Replace problematic characters
+            return text.encode('latin-1', 'replace').decode('latin-1')
 
         # Title
         pdf.set_font('Helvetica', 'B', 20)
@@ -288,7 +295,7 @@ def generate_pdf_report(state: AgentState) -> bytes:
 
         # Keyword
         pdf.set_font('Helvetica', 'B', 14)
-        pdf.cell(0, 10, f'Keyword: {state.keyword}', ln=True)
+        pdf.cell(0, 10, f'Keyword: {safe_text(state.keyword)}', ln=True)
         pdf.ln(5)
 
         # AI Overview
@@ -296,31 +303,31 @@ def generate_pdf_report(state: AgentState) -> bytes:
         pdf.cell(0, 8, 'Google AI Overview:', ln=True)
         pdf.set_font('Helvetica', '', 10)
         if state.ai_overview_text:
-            # Handle encoding issues
-            text = state.ai_overview_text.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 6, text[:1000])
+            pdf.multi_cell(0, 6, safe_text(state.ai_overview_text[:1500]))
         else:
-            pdf.cell(0, 6, 'Non disponibile', ln=True)
+            pdf.cell(0, 6, 'Non disponibile per questa keyword', ln=True)
         pdf.ln(8)
 
         # Best Answer
         pdf.set_font('Helvetica', 'B', 12)
-        pdf.cell(0, 8, f'Risposta Ottimizzata (Score: {state.best_score:.4f}):', ln=True)
+        score_text = f'{state.best_score:.4f}' if state.best_score else 'N/A'
+        pdf.cell(0, 8, f'Risposta Ottimizzata (Score: {score_text}):', ln=True)
         pdf.set_font('Helvetica', '', 10)
         if state.best_answer:
-            text = state.best_answer.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 6, text)
+            pdf.multi_cell(0, 6, safe_text(state.best_answer[:2000]))
         else:
             pdf.cell(0, 6, 'Non disponibile', ln=True)
         pdf.ln(8)
 
         # Iterations Summary
-        pdf.set_font('Helvetica', 'B', 12)
-        pdf.cell(0, 8, 'Riepilogo Iterazioni:', ln=True)
-        pdf.set_font('Helvetica', '', 10)
-        for it in state.iterations:
-            pdf.cell(0, 6, f"Iterazione {it['iteration']}: Score {it['score']:.4f} ({it.get('improvement', 0):+.2f}%)", ln=True)
-        pdf.ln(8)
+        if state.iterations:
+            pdf.set_font('Helvetica', 'B', 12)
+            pdf.cell(0, 8, 'Riepilogo Iterazioni:', ln=True)
+            pdf.set_font('Helvetica', '', 10)
+            for it in state.iterations:
+                imp = it.get('improvement', 0)
+                pdf.cell(0, 6, f"Iterazione {it['iteration']}: Score {it['score']:.4f} ({imp:+.2f}%)", ln=True)
+            pdf.ln(8)
 
         # Ranking
         if state.current_ranking:
@@ -328,12 +335,27 @@ def generate_pdf_report(state: AgentState) -> bytes:
             pdf.cell(0, 8, 'Ranking Finale:', ln=True)
             pdf.set_font('Helvetica', '', 10)
             for r in state.current_ranking[:5]:
-                label = r.get('label', 'N/A').encode('latin-1', 'replace').decode('latin-1')
+                label = safe_text(r.get('label', 'N/A'))
                 pdf.cell(0, 6, f"#{r['rank']} - {label}: {r['score']:.4f}", ln=True)
 
-        return pdf.output()
+        # Output as bytes
+        pdf_output = pdf.output()
+
+        # Ensure it's bytes
+        if isinstance(pdf_output, str):
+            return pdf_output.encode('latin-1')
+        elif isinstance(pdf_output, bytes):
+            return pdf_output
+        elif isinstance(pdf_output, bytearray):
+            return bytes(pdf_output)
+        else:
+            # Fallback: try to get bytes
+            return bytes(pdf_output)
+
     except Exception as e:
-        st.error(f"Errore generazione PDF: {e}")
+        import traceback
+        print(f"PDF Error: {e}")
+        print(traceback.format_exc())
         return None
 
 
@@ -539,12 +561,19 @@ if st.session_state.results:
     st.divider()
 
     # ===== AI OVERVIEW =====
-    st.subheader("🎯 AI Overview di Google")
-    if state.ai_overview_text:
-        st.markdown(format_answer_html(state.ai_overview_text), unsafe_allow_html=True)
-        st.caption(f"{len(state.ai_overview_text)} caratteri | {len(state.ai_overview_sources)} fonti")
+    if getattr(state, 'synthetic_reference', False):
+        st.subheader("🤖 Riferimento Sintetico (AI Overview non disponibile)")
+        st.warning("Google non ha restituito un AI Overview per questa keyword. È stato generato un riferimento sintetico basato sui competitor.")
+        if state.ai_overview_text:
+            st.markdown(format_answer_html(state.ai_overview_text), unsafe_allow_html=True)
+            st.caption(f"{len(state.ai_overview_text)} caratteri | Generato da LLM")
     else:
-        st.warning("AI Overview non disponibile")
+        st.subheader("🎯 AI Overview di Google")
+        if state.ai_overview_text:
+            st.markdown(format_answer_html(state.ai_overview_text), unsafe_allow_html=True)
+            st.caption(f"{len(state.ai_overview_text)} caratteri | {len(state.ai_overview_sources)} fonti")
+        else:
+            st.warning("AI Overview non disponibile per questa keyword")
 
     st.divider()
 
@@ -679,15 +708,20 @@ if st.session_state.results:
         )
 
     with col3:
-        pdf_bytes = generate_pdf_report(state)
-        if pdf_bytes:
-            st.download_button(
-                "📕 Scarica PDF",
-                pdf_bytes,
-                f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                "application/pdf",
-                use_container_width=True
-            )
+        try:
+            pdf_bytes = generate_pdf_report(state)
+            if pdf_bytes and isinstance(pdf_bytes, (bytes, bytearray)):
+                st.download_button(
+                    "📕 Scarica PDF",
+                    data=pdf_bytes,
+                    file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.button("📕 PDF non disponibile", disabled=True, use_container_width=True)
+        except Exception as e:
+            st.button("📕 Errore PDF", disabled=True, use_container_width=True)
 
 # ==================== INSTRUCTIONS ====================
 if not st.session_state.results and not st.session_state.running:
