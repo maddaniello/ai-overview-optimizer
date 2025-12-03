@@ -107,13 +107,14 @@ class OptimizationController:
             
             # === STEP 2: Scrape target URL ===
             logger.info("STEP 2/7: Scraping target URL...")
+            logger.info(f"Target URL: {target_url}")
             target_answer = self.scraper.extract_answer(target_url, keyword)
-            
+
             if not target_answer:
-                logger.error("Impossibile estrarre contenuto da target URL")
+                logger.error(f"Impossibile estrarre contenuto da: {target_url}")
                 return {
                     "success": False,
-                    "error": "Impossibile estrarre contenuto dalla pagina target"
+                    "error": f"Impossibile estrarre contenuto dalla pagina target ({target_url}). Verifica che l'URL sia accessibile e contenga testo."
                 }
             
             logger.success(f"Target content estratto: {len(target_answer.split())} parole")

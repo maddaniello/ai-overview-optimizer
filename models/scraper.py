@@ -5,12 +5,17 @@ Con headers realistici, retry, e fallback meta description
 import requests
 import random
 import time
+import warnings
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from typing import Dict, Optional, List, Any
 from utils.logger import logger
 from config import SCRAPING_TIMEOUT
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+
+# Suppress SSL warnings when verify=False
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
 
 # User agents realistici (Chrome/Firefox recenti)
 USER_AGENTS = [
@@ -31,7 +36,7 @@ class ContentScraper:
         self.timeout = SCRAPING_TIMEOUT
         logger.info("ContentScraper inizializzato (BeautifulSoup mode)")
 
-    def _get_session(self, mobile: bool = False) -> requests.Session:
+    def _get_session(self, mobile: bool = False, url: str = None) -> requests.Session:
         """Crea session con headers realistici"""
         session = requests.Session()
 
@@ -56,6 +61,12 @@ class ContentScraper:
             "Sec-Fetch-User": "?1",
             "Cache-Control": "max-age=0",
         }
+
+        # Aggiungi Referer basato sul dominio (aiuta con alcuni anti-bot)
+        if url:
+            parsed = urlparse(url)
+            headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+
         session.headers.update(headers)
         return session
 
@@ -73,24 +84,33 @@ class ContentScraper:
         last_error = None
         soup = None
 
+        logger.info(f"=== INIZIO SCRAPING: {url} ===")
+
         for attempt in range(retries + 1):
             try:
-                logger.info(f"Scraping: {url} (tentativo {attempt + 1})")
+                logger.info(f"Tentativo {attempt + 1}/{retries + 1} per {url}")
 
                 # Alterna tra desktop e mobile per alcuni tentativi
                 use_mobile = attempt >= 2
-                session = self._get_session(mobile=use_mobile)
+                session = self._get_session(mobile=use_mobile, url=url)
 
                 # Piccolo delay random per sembrare più umano
                 if attempt > 0:
                     time.sleep(random.uniform(1.0, 2.5))
 
-                # HTTP Request
-                response = session.get(url, timeout=self.timeout, allow_redirects=True)
+                # HTTP Request (prova con e senza verifica SSL)
+                try:
+                    response = session.get(url, timeout=self.timeout, allow_redirects=True)
+                except requests.exceptions.SSLError:
+                    logger.warning(f"SSL Error, riprovo senza verifica SSL")
+                    response = session.get(url, timeout=self.timeout, allow_redirects=True, verify=False)
+
+                logger.info(f"HTTP Status: {response.status_code}, Content-Length: {len(response.content)} bytes")
                 response.raise_for_status()
 
                 # Parse HTML
                 soup = BeautifulSoup(response.content, 'lxml')
+                logger.info(f"HTML parsed, title: {soup.title.string if soup.title else 'N/A'}")
 
                 # Rimuovi elementi non utili
                 for tag in soup(['script', 'style', 'nav', 'footer', 'header', 'aside', 'iframe', 'noscript', 'svg']):
@@ -98,6 +118,7 @@ class ContentScraper:
 
                 # Estrai contenuto
                 content = self._extract_content(soup)
+                logger.info(f"Contenuto estratto: {len(content)} caratteri")
 
                 if content and len(content) > 50:
                     logger.success(f"Pagina scraped: {len(content)} caratteri")
@@ -108,7 +129,9 @@ class ContentScraper:
                     }
                 else:
                     # Fallback: prova meta description + title
+                    logger.warning(f"Contenuto principale insufficiente ({len(content)} chars), provo fallback")
                     fallback_content = self._extract_fallback(soup)
+                    logger.info(f"Fallback estratto: {len(fallback_content)} caratteri")
                     if fallback_content and len(fallback_content) > 30:
                         logger.warning(f"Usando fallback (meta+title) per {url}")
                         return {
