@@ -92,15 +92,16 @@ class OptimizationController:
                 language_code=language_code
             )
             
-            if not serp_data or "ai_overview" not in serp_data:
+            if not serp_data or "ai_overview" not in serp_data or serp_data["ai_overview"] is None:
                 logger.warning("AI Overview non trovato per questa keyword")
                 return {
                     "success": False,
                     "error": "AI Overview non disponibile per questa keyword"
                 }
-            
+
             ai_overview = serp_data["ai_overview"]
-            logger.success(f"AI Overview trovato con {len(ai_overview.get('sources', []))} fonti")
+            sources_list = ai_overview.get("sources", []) or []
+            logger.success(f"AI Overview trovato con {len(sources_list)} fonti")
             
             # === STEP 2: Scrape target URL ===
             logger.info("STEP 2/7: Scraping target URL...")
@@ -119,7 +120,8 @@ class OptimizationController:
             logger.info("STEP 3/7: Scraping fonti competitor...")
             
             sources_urls = [
-                source["url"] for source in ai_overview.get("sources", [])[:max_sources]
+                source.get("url", "") for source in sources_list[:max_sources]
+                if source and source.get("url")
             ]
             
             if not sources_urls:
@@ -235,7 +237,7 @@ class OptimizationController:
                 logger.success(f"Ottimizzazione completata: +{improvement:.1f}%")
             
             # === STEP 8: Fan-out queries ===
-            fan_out_queries = ai_overview.get("fan_out_queries", [])
+            fan_out_queries = ai_overview.get("fan_out_queries", []) or []
             
             # === RISULTATI FINALI ===
             result = {
@@ -246,8 +248,8 @@ class OptimizationController:
                     "location": location,
                     "language": language,
                     "current_relevance_score": float(target_score),
-                    "is_ai_overview_source": target_url in [s.get("url", "") for s in ai_overview.get("sources", [])],
-                    "ai_overview_sources_count": len(ai_overview.get("sources", []))
+                    "is_ai_overview_source": target_url in [s.get("url", "") for s in sources_list],
+                    "ai_overview_sources_count": len(sources_list)
                 },
                 "target_content": {
                     "answer": target_answer,
