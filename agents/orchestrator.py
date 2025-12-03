@@ -288,10 +288,15 @@ class OrchestratorAgent(BaseAgent):
                 self.log("Nessun contenuto da rankare", level="warning")
                 return state
 
-            # Calcola ranking usando embeddings
+            # Calcola ranking usando il metodo configurato
             ref_type = "AI Overview" if state.ai_overview_text else "Riferimento sintetico"
-            self.log(f"Calcolo similarità per {len(contents_to_rank)} contenuti vs {ref_type}...", level="info")
-            ranking = await self._calculate_ranking_embeddings(state, contents_to_rank)
+
+            if self.google_ranking and self.google_ranking.available:
+                self.log(f"🔵 Usando Google Discovery Engine per ranking vs {ref_type}...", level="info")
+                ranking = await self._calculate_ranking_google(state, contents_to_rank)
+            else:
+                self.log(f"🟢 Usando OpenAI Embeddings per ranking vs {ref_type}...", level="info")
+                ranking = await self._calculate_ranking_embeddings(state, contents_to_rank)
 
             state.initial_ranking = ranking
             state.current_ranking = [r.copy() for r in ranking]
@@ -365,6 +370,35 @@ Scrivi SOLO il testo della risposta:"""
             self.log(f"Errore generazione riferimento: {e}", level="error")
 
         return state
+
+    async def _calculate_ranking_google(
+        self,
+        state: AgentState,
+        contents: List[Dict]
+    ) -> List[Dict]:
+        """Calcola ranking usando Google Discovery Engine"""
+        try:
+            self.log("Chiamata Google Discovery Engine Ranking API...", level="info")
+
+            # Usa il metodo specializzato per AI Overview
+            ranked = self.google_ranking.rank_for_ai_overview(
+                ai_overview_text=state.ai_overview_text,
+                contents=contents,
+                keyword=state.keyword
+            )
+
+            self.log(f"✅ Google Ranking completato: {len(ranked)} risultati", level="success")
+
+            # Log dettagliato dei risultati
+            for r in ranked[:3]:
+                self.log(f"  Google rank: {r.get('label', 'N/A')} -> score {r.get('score', 0):.4f}", level="info")
+
+            return ranked
+
+        except Exception as e:
+            self.log(f"❌ Errore Google Ranking: {e}", level="error")
+            self.log("Fallback a OpenAI Embeddings...", level="warning")
+            return await self._calculate_ranking_embeddings(state, contents)
 
     async def _calculate_ranking_embeddings(
         self,
@@ -657,7 +691,14 @@ Scrivi la versione MIGLIORATA (solo il testo, nient'altro):"""
 
     async def _calculate_score(self, state: AgentState, answer: str) -> float:
         """Calcola score di similarità con AI Overview"""
-        if not self.embeddings or not state.ai_overview_text:
+        if not state.ai_overview_text:
+            self.log("⚠️ AI Overview mancante per calcolo score", level="warning")
+            return 0.5
+
+        # Per il calcolo veloce durante le iterazioni, usiamo sempre embeddings
+        # Google Ranking è usato solo per il ranking iniziale completo
+        if not self.embeddings:
+            self.log("⚠️ Embeddings non disponibili", level="warning")
             return 0.5
 
         try:

@@ -117,6 +117,7 @@ class GoogleRankingClient:
             )
 
             # Execute ranking
+            logger.info(f"🔵 Chiamata Google Ranking API: query={query[:50]}..., docs={len(records)}")
             response = self.client.rank(request=request)
 
             # Parse results
@@ -129,7 +130,9 @@ class GoogleRankingClient:
                     'content': record.content
                 })
 
-            logger.info(f"Google Ranking completato: {len(results)} risultati")
+            logger.info(f"✅ Google Ranking API risposta: {len(results)} risultati rankati")
+            for r in results[:3]:
+                logger.info(f"   -> {r['id']}: score={r['score']:.4f}")
             return results
 
         except Exception as e:
