@@ -1,13 +1,21 @@
 """
 Content Analyzer - Analisi entità e ottimizzazione LLM
 """
-import spacy
+import re
 from collections import Counter
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Optional, Any
 from openai import OpenAI
 from utils.logger import logger
 from utils.helpers import truncate_text, count_words
 from config import OPENAI_CHAT_MODEL, MAX_ANSWER_LENGTH
+
+# SpaCy is optional
+try:
+    import spacy
+    SPACY_AVAILABLE = True
+except ImportError:
+    SPACY_AVAILABLE = False
+    logger.warning("spaCy non disponibile - uso estrazione entità base")
 
 
 class ContentAnalyzer:
@@ -23,15 +31,15 @@ class ContentAnalyzer:
         # OpenAI client
         self.openai_client = OpenAI(api_key=openai_api_key)
 
-        # SpaCy model
-        try:
-            self.nlp = spacy.load("it_core_news_sm")
-            logger.success("SpaCy model caricato: it_core_news_sm")
-        except OSError:
-            logger.warning("Modello it_core_news_sm non trovato, scarico...")
-            import subprocess
-            subprocess.run(["python", "-m", "spacy", "download", "it_core_news_sm"])
-            self.nlp = spacy.load("it_core_news_sm")
+        # SpaCy model (optional)
+        self.nlp = None
+        if SPACY_AVAILABLE:
+            try:
+                self.nlp = spacy.load("it_core_news_sm")
+                logger.success("SpaCy model caricato: it_core_news_sm")
+            except OSError:
+                logger.warning("Modello spaCy non trovato - uso estrazione base")
+                self.nlp = None
 
         logger.info("ContentAnalyzer inizializzato")
 
@@ -46,7 +54,6 @@ class ContentAnalyzer:
             Lista di entità con tipo e testo
         """
         if not self.nlp:
-            logger.warning("spaCy non disponibile - uso estrazione base")
             return self._extract_entities_basic(text)
 
         doc = self.nlp(text)
@@ -63,21 +70,33 @@ class ContentAnalyzer:
         return entities
 
     def _extract_entities_basic(self, text: str) -> List[Dict[str, str]]:
-        """Estrazione entità base senza spaCy (parole capitalizzate)"""
-        import re
+        """Estrazione entità base senza spaCy (parole capitalizzate + keywords)"""
+        entities = []
 
-        # Trova parole capitalizzate (entità potenziali)
-        pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
+        # Trova parole capitalizzate (nomi propri)
+        pattern = r'\b[A-Z][a-zàèéìòù]+(?:\s+[A-Z][a-zàèéìòù]+)*\b'
         matches = re.findall(pattern, text)
 
-        entities = []
         for match in matches:
-            entities.append({
-                "text": match,
-                "label": "ENTITY",
-                "start": 0,
-                "end": 0
-            })
+            if len(match) > 2:  # Ignora parole troppo corte
+                entities.append({
+                    "text": match,
+                    "label": "ENTITY",
+                    "start": 0,
+                    "end": 0
+                })
+
+        # Estrai anche termini tecnici comuni (parole lunghe)
+        words = text.split()
+        for word in words:
+            clean_word = re.sub(r'[^\w]', '', word)
+            if len(clean_word) > 8 and clean_word.isalpha():
+                entities.append({
+                    "text": clean_word.lower(),
+                    "label": "TERM",
+                    "start": 0,
+                    "end": 0
+                })
 
         return entities
 
@@ -117,8 +136,8 @@ class ContentAnalyzer:
 
         # Identifica entità mancanti nel target
         missing_entities = []
-        for entity, count in entity_counter.most_common(top_n * 2):  # Prendi più del necessario
-            if entity not in target_entity_texts and count >= 2:  # Presente in almeno 2 competitor
+        for entity, count in entity_counter.most_common(top_n * 2):
+            if entity not in target_entity_texts and count >= 2:
                 missing_entities.append({
                     "entity": entity,
                     "frequency": count,
@@ -148,16 +167,6 @@ class ContentAnalyzer:
     ) -> Optional[Dict[str, Any]]:
         """
         Genera versione ottimizzata della risposta usando LLM
-
-        Args:
-            query: Query originale
-            current_answer: Risposta corrente
-            top_sources: Top risposte competitor
-            missing_entities: Entità mancanti
-            max_words: Massimo parole
-
-        Returns:
-            Dict con risposta ottimizzata o None se LLM non disponibile
         """
         if not self.openai_client:
             logger.warning("OpenAI non disponibile - skip ottimizzazione LLM")
@@ -165,7 +174,7 @@ class ContentAnalyzer:
 
         logger.info("Generazione risposta ottimizzata con LLM")
 
-        # Formatta top sources - gestisce sia dict con 'answer' che con 'text'
+        # Formatta top sources
         sources_text = "\n\n".join([
             f"**Fonte {i+1}** (Score: {src.get('relevance_score', 0):.2f}):\n{truncate_text(src.get('answer', src.get('text', '')), 200)}"
             for i, src in enumerate(top_sources[:3])
@@ -177,7 +186,6 @@ class ContentAnalyzer:
             for ent in missing_entities[:5]
         ])
 
-        # Crea prompt
         prompt = f"""Query utente: "{query}"
 
 **RISPOSTA CORRENTE** (da ottimizzare):
@@ -226,9 +234,8 @@ Genera una versione OTTIMIZZATA della risposta corrente che:
 
             optimized_answer = response.choices[0].message.content.strip()
 
-            # Verifica lunghezza
             word_count = count_words(optimized_answer)
-            if word_count > max_words * 1.2:  # Tolleranza 20%
+            if word_count > max_words * 1.2:
                 logger.warning(f"Risposta ottimizzata troppo lunga ({word_count} parole), tronco")
                 words = optimized_answer.split()
                 optimized_answer = " ".join(words[:max_words]) + "..."
@@ -244,7 +251,6 @@ Genera una versione OTTIMIZZATA della risposta corrente che:
             logger.error(f"Errore generazione ottimizzazione: {str(e)}")
             return None
 
-    # Alias per compatibilità
     def optimize_answer(
         self,
         query: str,
@@ -263,25 +269,11 @@ Genera una versione OTTIMIZZATA della risposta corrente che:
         )
 
     def analyze_content_quality(self, text: str) -> Dict[str, Any]:
-        """
-        Analizza qualità del contenuto
-
-        Args:
-            text: Testo da analizzare
-
-        Returns:
-            Dict con metriche di qualità
-        """
+        """Analizza qualità del contenuto"""
         word_count = count_words(text)
         char_count = len(text)
-
-        # Conta frasi (approssimato)
         sentences = text.count('.') + text.count('!') + text.count('?')
-
-        # Parole per frase media
         avg_words_per_sentence = word_count / max(sentences, 1)
-
-        # Readability score approssimato (Flesch-like simplificato)
         avg_word_length = char_count / max(word_count, 1)
 
         return {
@@ -294,31 +286,19 @@ Genera una versione OTTIMIZZATA della risposta corrente che:
         }
 
     def extract_key_phrases(self, text: str, top_n: int = 10) -> List[str]:
-        """
-        Estrae frasi chiave dal testo
-
-        Args:
-            text: Testo da analizzare
-            top_n: Numero di frasi da estrarre
-
-        Returns:
-            Lista di frasi chiave
-        """
+        """Estrae frasi chiave dal testo"""
         if not self.nlp:
-            return []
+            # Fallback semplice: estrai n-grammi
+            words = text.lower().split()
+            bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
+            phrase_counter = Counter(bigrams)
+            return [phrase for phrase, _ in phrase_counter.most_common(top_n)]
 
         doc = self.nlp(text)
-
-        # Usa noun chunks come frasi chiave
         phrases = [chunk.text.lower() for chunk in doc.noun_chunks]
-
-        # Conta frequenze
         phrase_counter = Counter(phrases)
-
-        # Filtra frasi troppo corte o troppo lunghe
         filtered = [
             phrase for phrase, _ in phrase_counter.most_common(top_n * 2)
             if 2 <= len(phrase.split()) <= 5
         ]
-
         return filtered[:top_n]
