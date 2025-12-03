@@ -138,6 +138,10 @@ class OrchestratorAgent(BaseAgent):
 
             state.serp_data = serp_data
 
+            # Debug: mostra tipi di item trovati
+            if serp_data.get("_debug_item_types"):
+                self.log(f"Tipi item DataForSEO: {serp_data['_debug_item_types']}", level="info")
+
             # Estrai AI Overview
             ai_overview = serp_data.get("ai_overview")
 

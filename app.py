@@ -141,7 +141,7 @@ def render_ranking_table(ranking: List[Dict], title: str = "Ranking"):
         })
 
     if data:
-        st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(data), width="stretch", hide_index=True)
 
 
 def format_answer_html(answer: str) -> str:
@@ -274,6 +274,7 @@ def generate_pdf_report(state: AgentState) -> Optional[bytes]:
     """Generate PDF report from results"""
     try:
         from fpdf import FPDF
+        from fpdf.enums import XPos, YPos
 
         pdf = FPDF()
         pdf.add_page()
@@ -283,74 +284,70 @@ def generate_pdf_report(state: AgentState) -> Optional[bytes]:
             """Safely encode text for PDF"""
             if not text:
                 return ""
-            # Replace problematic characters
             return text.encode('latin-1', 'replace').decode('latin-1')
+
+        def new_line():
+            """Move to new line"""
+            pdf.set_xy(pdf.l_margin, pdf.get_y() + pdf.font_size * 1.5)
 
         # Title
         pdf.set_font('Helvetica', 'B', 20)
-        pdf.cell(0, 15, 'AI Overview Optimizer Report', ln=True, align='C')
+        pdf.cell(0, 15, 'AI Overview Optimizer Report', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.set_font('Helvetica', '', 10)
-        pdf.cell(0, 10, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}', ln=True, align='C')
+        pdf.cell(0, 10, f'Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}', new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(10)
 
         # Keyword
         pdf.set_font('Helvetica', 'B', 14)
-        pdf.cell(0, 10, f'Keyword: {safe_text(state.keyword)}', ln=True)
+        pdf.cell(0, 10, f'Keyword: {safe_text(state.keyword)}', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(5)
 
         # AI Overview
         pdf.set_font('Helvetica', 'B', 12)
-        pdf.cell(0, 8, 'Google AI Overview:', ln=True)
+        pdf.cell(0, 8, 'Google AI Overview:', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.set_font('Helvetica', '', 10)
         if state.ai_overview_text:
             pdf.multi_cell(0, 6, safe_text(state.ai_overview_text[:1500]))
         else:
-            pdf.cell(0, 6, 'Non disponibile per questa keyword', ln=True)
+            pdf.cell(0, 6, 'Non disponibile per questa keyword', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(8)
 
         # Best Answer
         pdf.set_font('Helvetica', 'B', 12)
         score_text = f'{state.best_score:.4f}' if state.best_score else 'N/A'
-        pdf.cell(0, 8, f'Risposta Ottimizzata (Score: {score_text}):', ln=True)
+        pdf.cell(0, 8, f'Risposta Ottimizzata (Score: {score_text}):', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.set_font('Helvetica', '', 10)
         if state.best_answer:
             pdf.multi_cell(0, 6, safe_text(state.best_answer[:2000]))
         else:
-            pdf.cell(0, 6, 'Non disponibile', ln=True)
+            pdf.cell(0, 6, 'Non disponibile', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         pdf.ln(8)
 
         # Iterations Summary
         if state.iterations:
             pdf.set_font('Helvetica', 'B', 12)
-            pdf.cell(0, 8, 'Riepilogo Iterazioni:', ln=True)
+            pdf.cell(0, 8, 'Riepilogo Iterazioni:', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_font('Helvetica', '', 10)
             for it in state.iterations:
                 imp = it.get('improvement', 0)
-                pdf.cell(0, 6, f"Iterazione {it['iteration']}: Score {it['score']:.4f} ({imp:+.2f}%)", ln=True)
+                pdf.cell(0, 6, f"Iterazione {it['iteration']}: Score {it['score']:.4f} ({imp:+.2f}%)", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(8)
 
         # Ranking
         if state.current_ranking:
             pdf.set_font('Helvetica', 'B', 12)
-            pdf.cell(0, 8, 'Ranking Finale:', ln=True)
+            pdf.cell(0, 8, 'Ranking Finale:', new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.set_font('Helvetica', '', 10)
             for r in state.current_ranking[:5]:
                 label = safe_text(r.get('label', 'N/A'))
-                pdf.cell(0, 6, f"#{r['rank']} - {label}: {r['score']:.4f}", ln=True)
+                pdf.cell(0, 6, f"#{r['rank']} - {label}: {r['score']:.4f}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
         # Output as bytes
         pdf_output = pdf.output()
 
-        # Ensure it's bytes
-        if isinstance(pdf_output, str):
-            return pdf_output.encode('latin-1')
-        elif isinstance(pdf_output, bytes):
-            return pdf_output
-        elif isinstance(pdf_output, bytearray):
+        if isinstance(pdf_output, (bytes, bytearray)):
             return bytes(pdf_output)
-        else:
-            # Fallback: try to get bytes
-            return bytes(pdf_output)
+        return None
 
     except Exception as e:
         import traceback
@@ -445,7 +442,7 @@ with st.sidebar:
     else:
         st.warning("⚠️ Completa i campi")
 
-    analyze_btn = st.button("🚀 Avvia Analisi", use_container_width=True,
+    analyze_btn = st.button("🚀 Avvia Analisi", width="stretch",
                             disabled=not ready or st.session_state.running)
 
 # ==================== MAIN ====================
@@ -708,7 +705,7 @@ if st.session_state.results:
             json.dumps(export_data, indent=2, ensure_ascii=False, default=str),
             f"analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
             "application/json",
-            use_container_width=True
+            width="stretch"
         )
 
     with col2:
@@ -723,7 +720,7 @@ if st.session_state.results:
             csv_data,
             "summary.csv",
             "text/csv",
-            use_container_width=True
+            width="stretch"
         )
 
     with col3:
@@ -735,12 +732,12 @@ if st.session_state.results:
                     data=pdf_bytes,
                     file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
                     mime="application/pdf",
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
-                st.button("📕 PDF non disponibile", disabled=True, use_container_width=True)
+                st.button("📕 PDF non disponibile", disabled=True, width="stretch")
         except Exception as e:
-            st.button("📕 Errore PDF", disabled=True, use_container_width=True)
+            st.button("📕 Errore PDF", disabled=True, width="stretch")
 
 # ==================== INSTRUCTIONS ====================
 if not st.session_state.results and not st.session_state.running:

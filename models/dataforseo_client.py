@@ -210,6 +210,7 @@ class DataForSEOClient:
             "ai_overview_sources": ai_overview_sources,
             "organic_results": organic_results[:10],  # Top 10
             "has_ai_overview": ai_overview is not None,
+            "_debug_item_types": list(set(item_types)),  # Per debug
         }
 
     def _parse_ai_overview(self, ai_item: Dict) -> Dict:
