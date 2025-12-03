@@ -359,6 +359,21 @@ def generate_pdf_report(state: AgentState) -> Optional[bytes]:
         return None
 
 
+# ==================== LOAD SECRETS ====================
+def get_secret(key: str, default: str = "") -> str:
+    """Get secret from Streamlit secrets or return default"""
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+# Pre-load secrets
+DEFAULT_DFS_LOGIN = get_secret("DATAFORSEO_LOGIN", "")
+DEFAULT_DFS_PASSWORD = get_secret("DATAFORSEO_PASSWORD", "")
+DEFAULT_OPENAI_KEY = get_secret("OPENAI_API_KEY", "")
+DEFAULT_GCP_PROJECT = get_secret("GOOGLE_PROJECT_ID", "")
+DEFAULT_GCP_CREDS = get_secret("GOOGLE_CREDENTIALS_JSON", "")
+
 # ==================== SIDEBAR ====================
 with st.sidebar:
     st.image(MOCA_LOGO_URL, width=80)
@@ -367,20 +382,24 @@ with st.sidebar:
     st.divider()
 
     # API KEYS
-    with st.expander("🔑 API Keys", expanded=True):
-        dataforseo_login = st.text_input("DataForSEO Login", key="dfs_login")
-        dataforseo_password = st.text_input("DataForSEO Password", type="password", key="dfs_pass")
+    with st.expander("🔑 API Keys", expanded=not bool(DEFAULT_OPENAI_KEY)):
+        dataforseo_login = st.text_input("DataForSEO Login", value=DEFAULT_DFS_LOGIN, key="dfs_login")
+        dataforseo_password = st.text_input("DataForSEO Password", type="password",
+                                            value=DEFAULT_DFS_PASSWORD, key="dfs_pass")
         st.markdown("---")
-        openai_key = st.text_input("OpenAI API Key", type="password", key="oai_key")
+        openai_key = st.text_input("OpenAI API Key", type="password",
+                                   value=DEFAULT_OPENAI_KEY, key="oai_key")
         st.markdown("---")
         gemini_key = st.text_input("Gemini Key (opz.)", type="password", key="gem_key")
 
     # Google Cloud (optional)
-    with st.expander("☁️ Google Cloud (opz.)", expanded=False):
-        google_project_id = st.text_input("Project ID", key="gcp_project")
-        google_credentials = st.text_area("Service Account JSON", height=100, key="gcp_creds",
+    with st.expander("☁️ Google Cloud Ranking", expanded=bool(DEFAULT_GCP_PROJECT)):
+        google_project_id = st.text_input("Project ID", value=DEFAULT_GCP_PROJECT, key="gcp_project")
+        google_credentials = st.text_area("Service Account JSON", height=100,
+                                          value=DEFAULT_GCP_CREDS, key="gcp_creds",
                                           help="Incolla il JSON delle credenziali service account")
         use_google_ranking = st.checkbox("Usa Google Ranking API", key="use_google_ranking",
+                                         value=bool(DEFAULT_GCP_PROJECT),
                                          help="Usa Discovery Engine per reranking semantico")
 
     st.divider()

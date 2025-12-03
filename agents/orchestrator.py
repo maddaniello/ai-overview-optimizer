@@ -56,8 +56,12 @@ class OrchestratorAgent(BaseAgent):
         # Embeddings (sempre OpenAI)
         if state.openai_api_key:
             self.embeddings = EmbeddingsClient(api_key=state.openai_api_key)
+            self.log("OpenAI Embeddings client inizializzato", level="info")
 
         # Google Ranking (opzionale)
+        self.log(f"Ranking method richiesto: {state.ranking_method}", level="info")
+        self.log(f"Google Project ID: {state.google_project_id or 'Non configurato'}", level="info")
+
         if state.google_project_id and state.ranking_method == "google":
             try:
                 from models.google_ranking import GoogleRankingClient
@@ -65,9 +69,16 @@ class OrchestratorAgent(BaseAgent):
                     project_id=state.google_project_id,
                     credentials_json=state.google_credentials_json
                 )
-                self.log("Google Ranking API inizializzata", level="success")
+                self.log("✅ Google Discovery Engine Ranking API inizializzata", level="success")
+                self.log("Il ranking userà Google Cloud per reranking semantico", level="info")
             except Exception as e:
-                self.log(f"Google Ranking non disponibile: {e}", level="warning")
+                self.log(f"⚠️ Google Ranking non disponibile: {e}", level="warning")
+                self.log("Fallback a OpenAI Embeddings per ranking", level="info")
+        else:
+            if state.ranking_method == "embeddings":
+                self.log("Ranking method: OpenAI Embeddings (cosine similarity)", level="info")
+            else:
+                self.log(f"Google Ranking non attivo (project_id={bool(state.google_project_id)}, method={state.ranking_method})", level="info")
 
         self.log("Client inizializzati", level="success")
 
