@@ -51,7 +51,7 @@ class DataForSEOClient:
         Effettua richiesta POST a DataForSEO API
 
         Args:
-            endpoint: Endpoint API (es. "/v3/serp/google/organic/live/advanced")
+            endpoint: Endpoint API (es. "/serp/google/organic/live/advanced")
             payload: Payload JSON della richiesta
 
         Returns:
@@ -130,7 +130,7 @@ class DataForSEOClient:
 
         logger.info(f"Ricerca SERP per: '{keyword}' | Location: {location} ({loc_code}) | Language: {language} ({lang_code})")
 
-        result = self._make_request("/v3/serp/google/organic/live/advanced", payload)
+        result = self._make_request("/serp/google/organic/live/advanced", payload)
 
         # Estrai dati rilevanti
         serp_data = self._extract_serp_data(result, keyword)
@@ -239,7 +239,7 @@ class DataForSEOClient:
         try:
             # Usa endpoint ping per verificare auth
             response = requests.get(
-                f"{self.api_url}/v3/appendix/user_data",
+                f"{self.api_url}/appendix/user_data",
                 headers=self.headers,
                 timeout=10
             )
