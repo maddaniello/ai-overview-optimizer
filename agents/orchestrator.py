@@ -450,40 +450,61 @@ class OrchestratorAgent(BaseAgent):
 
             # Prompt diverso per prima iterazione vs successive
             if iteration == 1:
-                prompt = f"""KEYWORD: {state.keyword}
+                # Se c'è una risposta iniziale, ottimizzala; altrimenti creane una nuova
+                if current_answer and len(current_answer.strip()) > 50:
+                    prompt = f"""KEYWORD: {state.keyword}
 
-RISPOSTA INIZIALE DA OTTIMIZZARE:
-{current_answer}
+CONTENUTO ATTUALE DA CUI PARTIRE (per riferimento, NON copiare):
+{current_answer[:1000]}{'...' if len(current_answer) > 1000 else ''}
 
-OBIETTIVO: Crea la PRIMA versione ottimizzata di questa risposta per:
-1. Coprire TUTTI i punti chiave presenti nell'AI Overview di Google
-2. Essere più completa e rilevante delle risposte dei competitor
-3. Massimo 300 parole
-4. Linguaggio chiaro, autorevole, diretto
+COMPITO: Scrivi una NUOVA risposta ottimizzata per Google AI Overview.
 
-FORMATO OUTPUT:
-Prima spiega il tuo RAGIONAMENTO (cosa manca, cosa migliorare, strategia)
-Poi scrivi la RISPOSTA OTTIMIZZATA completa."""
+REQUISITI:
+1. Crea contenuto ORIGINALE ispirandoti all'AI Overview di Google
+2. NON copiare il contenuto attuale - usalo solo come riferimento
+3. Copri i punti chiave che Google considera importanti
+4. Massimo 250-300 parole
+5. Stile: chiaro, autorevole, diretto, utile
+6. Formato: paragrafi fluidi senza elenchi puntati o titoli
+
+OUTPUT: Scrivi SOLO la risposta ottimizzata, niente altro."""
+                else:
+                    prompt = f"""KEYWORD: {state.keyword}
+
+COMPITO: Scrivi una risposta ottimizzata per comparire in Google AI Overview.
+
+REQUISITI:
+1. Rispondi in modo diretto e completo alla query "{state.keyword}"
+2. Copri tutti i punti chiave presenti nell'AI Overview di Google
+3. Sii più completo e autorevole dei competitor
+4. Massimo 250-300 parole
+5. Stile: chiaro, diretto, professionale
+6. Formato: paragrafi fluidi senza elenchi puntati o titoli
+
+OUTPUT: Scrivi SOLO la risposta ottimizzata, niente altro."""
             else:
                 prev_score = state.iterations[-1]['score'] if state.iterations else 0
                 prompt = f"""KEYWORD: {state.keyword}
 
-ITERAZIONE {iteration} - Devi MIGLIORARE la risposta dell'iterazione precedente.
+ITERAZIONE {iteration}/{state.max_iterations}
 
-RISPOSTA PRECEDENTE (iterazione {iteration-1}, score: {prev_score:.4f}):
+RISPOSTA PRECEDENTE (score: {prev_score:.4f}):
 {current_answer}
 
-OBIETTIVO: Migliora ULTERIORMENTE questa risposta per:
-1. Aumentare la similarità semantica con l'AI Overview di Google
-2. Colmare eventuali GAP rispetto ai competitor
-3. Migliorare chiarezza e autorevolezza
-4. Massimo 300 parole
+COMPITO: Migliora questa risposta per aumentare lo score di similarità con l'AI Overview.
 
-IMPORTANTE: Devi produrre una risposta MIGLIORE della precedente, non riscriverla da zero.
+STRATEGIA DI MIGLIORAMENTO:
+1. Analizza cosa manca rispetto all'AI Overview di Google
+2. Aggiungi informazioni chiave non presenti
+3. Migliora la struttura e la chiarezza
+4. Mantieni massimo 250-300 parole
 
-FORMATO OUTPUT:
-Prima spiega il tuo RAGIONAMENTO (cosa non funzionava, cosa hai migliorato)
-Poi scrivi la RISPOSTA OTTIMIZZATA MIGLIORATA."""
+IMPORTANTE:
+- Migliora la risposta esistente, non riscriverla completamente
+- Concentrati sui gap semantici con l'AI Overview
+- Ogni iterazione deve portare un miglioramento concreto
+
+OUTPUT: Scrivi SOLO la risposta migliorata, niente altro."""
 
             self.log(f"Generando ottimizzazione iterazione {iteration}...", level="info")
 
