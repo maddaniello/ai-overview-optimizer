@@ -148,24 +148,30 @@ with st.sidebar:
         )
 
         st.markdown("---")
-        st.markdown("### Jina AI (Reranker)")
+        st.markdown("### Jina AI (Opzionale)")
         jina_key = st.text_input(
             "API Key",
             type="password",
-            help="Formato: jina_...",
+            help="Opzionale - lascia vuoto per usare OpenAI Embeddings",
             key="jina_key"
         )
+
+        # Selezione provider reranker
+        reranker_provider = "jina" if jina_key else "embeddings"
+        if jina_key:
+            st.caption("✅ Jina Reranker attivo")
+        else:
+            st.caption("ℹ️ Usando OpenAI Embeddings per reranking")
 
     # ===== VALIDAZIONE CREDENZIALI =====
     credentials_valid = all([
         dataforseo_login,
         dataforseo_password,
-        openai_key,
-        jina_key
+        openai_key
     ])
 
     if not credentials_valid:
-        st.warning("⚠️ Inserisci tutte le API keys per continuare")
+        st.warning("⚠️ Inserisci DataForSEO e OpenAI keys per continuare")
     else:
         st.success("✅ Credenziali configurate")
 
@@ -216,12 +222,11 @@ with st.sidebar:
         st.markdown(f"""
         **Costo stimato per questa analisi:**
         - DataForSEO: ~$0.10
-        - OpenAI: ~$0.05
-        - Jina: Gratuito
+        - OpenAI (embeddings + chat): ~$0.05-0.10
 
         **Totale**: ~$0.15-0.20
 
-        **Fonti**: {max_sources}
+        **Fonti analizzate**: {max_sources}
         """)
 
     st.divider()
@@ -239,17 +244,18 @@ if not credentials_valid:
 
     with st.expander("📖 Come ottenere le API Keys"):
         st.markdown("""
-        ### 🔑 DataForSEO
+        ### 🔑 DataForSEO (Obbligatorio)
         1. Registrati su [DataForSEO](https://dataforseo.com/)
         2. Vai su Dashboard → API Access
         3. Copia Login e Password
 
-        ### 🔑 OpenAI
+        ### 🔑 OpenAI (Obbligatorio)
         1. Vai su [OpenAI Platform](https://platform.openai.com/)
         2. Account → API Keys
         3. Crea nuova key (sk-...)
 
-        ### 🔑 Jina AI
+        ### 🔑 Jina AI (Opzionale)
+        Se vuoi usare Jina Reranker invece di OpenAI Embeddings:
         1. Registrati su [Jina AI](https://jina.ai/)
         2. Dashboard → API Keys
         3. Crea nuova key (jina_...)
@@ -291,8 +297,8 @@ if analyze_button:
             dataforseo_login=dataforseo_login,
             dataforseo_password=dataforseo_password,
             openai_api_key=openai_key,
-            jina_api_key=jina_key,
-            reranker_provider="jina"
+            jina_api_key=jina_key if jina_key else None,
+            reranker_provider=reranker_provider
         )
 
         # Progress tracking

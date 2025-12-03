@@ -19,38 +19,40 @@ class OptimizationController:
         dataforseo_login: str,
         dataforseo_password: str,
         openai_api_key: str,
-        jina_api_key: str,
-        reranker_provider: str = "jina"
+        jina_api_key: str = None,
+        reranker_provider: str = "embeddings"
     ):
         """
         Inizializza controller con credenziali utente
-        
+
         Args:
             dataforseo_login: DataForSEO login
             dataforseo_password: DataForSEO password
             openai_api_key: OpenAI API key
-            jina_api_key: Jina API key
-            reranker_provider: "jina" o "google"
+            jina_api_key: Jina API key (opzionale)
+            reranker_provider: "embeddings" (default) o "jina"
         """
         logger.info("Inizializzazione OptimizationController")
-        
+
         # Initialize clients with user credentials
         self.dataforseo = DataForSEOClient(
             login=dataforseo_login,
             password=dataforseo_password
         )
-        
+
         self.scraper = ContentScraper()
-        
+
+        # Usa embeddings come default (no API extra), fallback a jina se disponibile
         self.reranker = RerankerClient(
             provider=reranker_provider,
-            jina_api_key=jina_api_key if reranker_provider == "jina" else None
+            jina_api_key=jina_api_key if reranker_provider == "jina" else None,
+            openai_api_key=openai_api_key if reranker_provider == "embeddings" else None
         )
-        
+
         self.embeddings = EmbeddingsClient(api_key=openai_api_key)
-        
+
         self.analyzer = ContentAnalyzer(openai_api_key=openai_api_key)
-        
+
         logger.success("Controller inizializzato con successo")
     
     def optimize_content(

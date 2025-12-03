@@ -1,26 +1,37 @@
 """
-Client per Reranking - supporta Jina AI
+Client per Reranking - supporta Jina AI o OpenAI Embeddings
 """
+import numpy as np
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 from utils.logger import logger
-from config import JINA_MODEL, JINA_API_URL
+from config import JINA_MODEL, JINA_API_URL, OPENAI_EMBEDDING_MODEL
 
 
 class RerankerClient:
-    """Client per reranking con Jina AI"""
+    """Client per reranking con Jina AI o OpenAI Embeddings"""
 
-    def __init__(self, provider: str = "jina", jina_api_key: str = None):
+    def __init__(
+        self,
+        provider: str = "embeddings",
+        jina_api_key: str = None,
+        openai_api_key: str = None
+    ):
         """
         Args:
-            provider: "jina" (default)
-            jina_api_key: Jina API key
+            provider: "jina" o "embeddings" (default: embeddings)
+            jina_api_key: Jina API key (solo per provider jina)
+            openai_api_key: OpenAI API key (per provider embeddings)
         """
         self.provider = provider
+        self.openai_client = None
+        self.embeddings_model = OPENAI_EMBEDDING_MODEL
 
         if self.provider == "jina":
             self._init_jina(jina_api_key)
+        elif self.provider == "embeddings":
+            self._init_embeddings(openai_api_key)
         else:
             raise ValueError(f"Provider non supportato: {self.provider}")
 
@@ -34,6 +45,15 @@ class RerankerClient:
         self.api_key = api_key
         self.base_url = JINA_API_URL
         self.model = JINA_MODEL
+
+    def _init_embeddings(self, api_key: str = None):
+        """Inizializza reranker basato su OpenAI Embeddings"""
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY non configurata per embeddings reranker")
+
+        from openai import OpenAI
+        self.openai_client = OpenAI(api_key=api_key)
+        logger.info(f"Embeddings reranker: {self.embeddings_model}")
 
     def rerank(
         self,
@@ -66,7 +86,10 @@ class RerankerClient:
 
         logger.info(f"Reranking {len(documents)} documenti con {self.provider}")
 
-        return self._rerank_jina(query, documents, return_documents)
+        if self.provider == "embeddings":
+            return self._rerank_embeddings(query, documents, return_documents)
+        else:
+            return self._rerank_jina(query, documents, return_documents)
 
     def _rerank_with_metadata(
         self,
@@ -76,7 +99,10 @@ class RerankerClient:
         return_documents: bool
     ) -> List[Dict[str, Any]]:
         """Rerank preservando metadata originali"""
-        results = self._rerank_jina(query, documents, return_documents)
+        if self.provider == "embeddings":
+            results = self._rerank_embeddings(query, documents, return_documents)
+        else:
+            results = self._rerank_jina(query, documents, return_documents)
 
         # Arricchisci risultati con metadata originali
         enriched = []
@@ -87,6 +113,65 @@ class RerankerClient:
             enriched.append(item)
 
         return enriched
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10)
+    )
+    def _rerank_embeddings(
+        self,
+        query: str,
+        documents: List[str],
+        return_documents: bool
+    ) -> List[Dict[str, Any]]:
+        """Rerank usando OpenAI Embeddings + cosine similarity"""
+        try:
+            # Genera embeddings per query e documenti
+            all_texts = [query] + documents
+            response = self.openai_client.embeddings.create(
+                input=all_texts,
+                model=self.embeddings_model
+            )
+
+            embeddings = [np.array(data.embedding) for data in response.data]
+            query_embedding = embeddings[0]
+            doc_embeddings = embeddings[1:]
+
+            # Calcola cosine similarity per ogni documento
+            results = []
+            for i, doc_emb in enumerate(doc_embeddings):
+                similarity = self._cosine_similarity(query_embedding, doc_emb)
+
+                item = {
+                    "index": i,
+                    "relevance_score": float(similarity)
+                }
+
+                if return_documents:
+                    item["document"] = documents[i]
+
+                results.append(item)
+
+            # Ordina per score decrescente
+            results.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+            logger.info(f"Reranking Embeddings completato: {len(results)} risultati")
+            return results
+
+        except Exception as e:
+            logger.error(f"Errore reranking Embeddings: {str(e)}")
+            raise
+
+    @staticmethod
+    def _cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
+        """Calcola cosine similarity tra due vettori"""
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        return float(np.dot(vec_a, vec_b) / (norm_a * norm_b))
 
     @retry(
         stop=stop_after_attempt(3),
@@ -166,7 +251,10 @@ class RerankerClient:
         texts = [item.get(text_field, "") for item in items]
 
         # Rerank
-        results = self._rerank_jina(query, texts, return_documents=False)
+        if self.provider == "embeddings":
+            results = self._rerank_embeddings(query, texts, return_documents=False)
+        else:
+            results = self._rerank_jina(query, texts, return_documents=False)
 
         # Aggiungi score agli items
         for result in results:
