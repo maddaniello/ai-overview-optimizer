@@ -8,7 +8,6 @@ openai
 python-dotenv
 tenacity
 pydantic
-loguru
 lxml
 aiohttp
 spacy
