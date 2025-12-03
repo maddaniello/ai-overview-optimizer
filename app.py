@@ -443,11 +443,10 @@ if analyze_btn:
                 return phase
         return None
 
-    current_phase_name = None
+    # Use session state instead of nonlocal
+    st.session_state.current_phase = None
 
     def log_callback(entry: Dict):
-        nonlocal current_phase_name
-
         log_entry = {
             "timestamp": datetime.now().strftime("%H:%M:%S"),
             "level": entry.get("level", "info"),
@@ -459,20 +458,20 @@ if analyze_btn:
         # Check if this starts a new phase
         detected_phase = detect_phase(msg)
         if detected_phase:
-            current_phase_name = detected_phase
-            if current_phase_name not in st.session_state.phase_logs:
-                st.session_state.phase_logs[current_phase_name] = []
+            st.session_state.current_phase = detected_phase
+            if st.session_state.current_phase not in st.session_state.phase_logs:
+                st.session_state.phase_logs[st.session_state.current_phase] = []
 
         # Add to current phase logs
-        if current_phase_name:
-            st.session_state.phase_logs[current_phase_name].append(log_entry)
+        if st.session_state.current_phase:
+            st.session_state.phase_logs[st.session_state.current_phase].append(log_entry)
 
             # Update the phase display
-            if current_phase_name in phase_containers:
-                phase_containers[current_phase_name].markdown(
+            if st.session_state.current_phase in phase_containers:
+                phase_containers[st.session_state.current_phase].markdown(
                     render_phase_logs(
-                        current_phase_name,
-                        st.session_state.phase_logs[current_phase_name],
+                        st.session_state.current_phase,
+                        st.session_state.phase_logs[st.session_state.current_phase],
                         is_active=True
                     ),
                     unsafe_allow_html=True
