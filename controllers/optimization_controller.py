@@ -206,27 +206,33 @@ class OptimizationController:
             optimized_result = self.analyzer.optimize_answer(
                 query=keyword,
                 current_answer=target_answer,
-                top_sources=[s["text"] for s in top_sources[:3]],
+                top_sources=top_sources[:3],
                 missing_entities=missing_entities
             )
-            
-            optimized_answer = optimized_result["optimized_answer"]
-            
-            # Calcola nuovo score per versione ottimizzata
-            optimized_items = [
-                {"text": optimized_answer, "is_optimized": True},
-                *[{"text": s["text"], "is_optimized": False} for s in top_sources]
-            ]
-            
-            optimized_ranked = self.reranker.rerank(keyword, optimized_items)
-            optimized_score = next(
-                (r["relevance_score"] for r in optimized_ranked if r.get("is_optimized")),
-                target_score
-            )
-            
-            improvement = ((optimized_score - target_score) / target_score * 100) if target_score > 0 else 0
-            
-            logger.success(f"Ottimizzazione completata: +{improvement:.1f}%")
+
+            if not optimized_result:
+                optimized_answer = target_answer
+                optimized_score = target_score
+                improvement = 0
+                logger.warning("Ottimizzazione non disponibile, uso risposta originale")
+            else:
+                optimized_answer = optimized_result.get("optimized_answer", target_answer)
+
+                # Calcola nuovo score per versione ottimizzata
+                optimized_items = [
+                    {"text": optimized_answer, "is_optimized": True},
+                    *[{"text": s["text"], "is_optimized": False} for s in top_sources]
+                ]
+
+                optimized_ranked = self.reranker.rerank(keyword, optimized_items)
+                optimized_score = next(
+                    (r["relevance_score"] for r in optimized_ranked if r.get("is_optimized")),
+                    target_score
+                )
+
+                improvement = ((optimized_score - target_score) / target_score * 100) if target_score > 0 else 0
+
+                logger.success(f"Ottimizzazione completata: +{improvement:.1f}%")
             
             # === STEP 8: Fan-out queries ===
             fan_out_queries = ai_overview.get("fan_out_queries", [])
@@ -259,10 +265,7 @@ class OptimizationController:
                     for i, s in enumerate(top_sources)
                 ],
                 "gap_analysis": {
-                    "missing_entities": [
-                        {"entity": ent, "frequency": freq}
-                        for ent, freq in missing_entities
-                    ],
+                    "missing_entities": missing_entities,
                     "entity_coverage": float(entity_coverage),
                     "semantic_similarity_avg": float(avg_similarity),
                     "relevance_gap": float(max(s["relevance_score"] for s in top_sources) - target_score) if top_sources else 0
@@ -317,7 +320,7 @@ class OptimizationController:
         
         # Entities
         if len(missing_entities) > 5:
-            top_entities = [ent for ent, _ in missing_entities[:5]]
+            top_entities = [ent["entity"] for ent in missing_entities[:5]]
             recommendations.append(f"🏷️ Aggiungi queste entità chiave: {', '.join(top_entities)}")
         
         # Improvement
