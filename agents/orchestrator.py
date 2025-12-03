@@ -129,6 +129,11 @@ class OrchestratorAgent(BaseAgent):
 
             # Estrai AI Overview
             ai_overview = serp_data.get("ai_overview")
+
+            # Debug: log se AI Overview è stato trovato
+            has_aio = serp_data.get("has_ai_overview", False)
+            self.log(f"has_ai_overview flag: {has_aio}", level="info")
+
             if ai_overview:
                 state.ai_overview_text = ai_overview.get("text", "")
                 state.ai_overview_sources = ai_overview.get("sources", [])
@@ -143,7 +148,8 @@ class OrchestratorAgent(BaseAgent):
                     preview = state.ai_overview_text[:200] + "..." if len(state.ai_overview_text) > 200 else state.ai_overview_text
                     self.log(f"Preview AIO: {preview}", level="info", data={"text": state.ai_overview_text})
             else:
-                self.log("AI Overview non disponibile per questa keyword", level="warning")
+                self.log("⚠️ AI Overview NON trovato nella risposta DataForSEO", level="warning")
+                self.log("Verrà generato un riferimento sintetico dai competitor", level="info")
 
             # Risultati organici
             state.organic_results = serp_data.get("organic_results", [])[:state.max_serp_results]

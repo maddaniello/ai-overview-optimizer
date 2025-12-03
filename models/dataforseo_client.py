@@ -155,16 +155,39 @@ class DataForSEOClient:
         result = task_result["result"][0]
         items = result.get("items", [])
 
-        # Estrai AI Overview
+        # Debug: log tutti i tipi di item trovati
+        item_types = [item.get("type") for item in items]
+        logger.info(f"Tipi di item trovati: {set(item_types)}")
+
+        # Estrai AI Overview - cerca vari possibili nomi
         ai_overview = None
         ai_overview_sources = []
 
         for item in items:
-            if item.get("type") == "ai_overview":
+            item_type = item.get("type", "").lower()
+
+            # Cerca AI Overview con vari nomi possibili
+            if item_type in ["ai_overview", "ai-overview", "google_ai_overview", "featured_snippet_ai"]:
+                logger.info(f"Trovato AI Overview con type: {item_type}")
                 ai_overview = self._parse_ai_overview(item)
                 ai_overview_sources = ai_overview.get("sources", [])
                 logger.info(f"AI Overview trovato con {len(ai_overview_sources)} fonti")
                 break
+
+            # Alcuni risultati potrebbero essere nested in featured_snippet
+            if item_type == "featured_snippet":
+                # Controlla se contiene AI Overview data
+                if item.get("text") and len(item.get("text", "")) > 200:
+                    logger.info("Trovato featured_snippet con testo lungo - potrebbe essere AI Overview")
+                    ai_overview = self._parse_ai_overview(item)
+                    ai_overview_sources = ai_overview.get("sources", [])
+                    break
+
+        if not ai_overview:
+            logger.warning(f"AI Overview NON trovato. Tipi disponibili: {set(item_types)}")
+            # Debug: stampa primi 2 item per capire la struttura
+            for i, item in enumerate(items[:3]):
+                logger.debug(f"Item {i}: type={item.get('type')}, keys={list(item.keys())[:10]}")
 
         # Estrai risultati organici
         organic_results = []
