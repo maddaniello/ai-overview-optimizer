@@ -47,11 +47,12 @@ class ContentScraper:
             ua = random.choice(USER_AGENTS[:-1])
 
         # Headers che simulano un browser reale
+        # NOTA: Non accettiamo brotli (br) per evitare problemi di decompressione
         headers = {
             "User-Agent": ua,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
             "Accept-Language": "it-IT,it;q=0.9,en-US;q=0.8,en;q=0.7",
-            "Accept-Encoding": "gzip, deflate, br",
+            "Accept-Encoding": "gzip, deflate",  # NO brotli (br) - può causare problemi
             "DNT": "1",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
@@ -108,8 +109,16 @@ class ContentScraper:
                 logger.info(f"HTTP Status: {response.status_code}, Content-Length: {len(response.content)} bytes")
                 response.raise_for_status()
 
-                # Parse HTML
-                soup = BeautifulSoup(response.content, 'lxml')
+                # Gestione encoding corretta
+                # requests dovrebbe decodificare automaticamente, ma verifichiamo
+                if response.encoding is None or response.encoding.lower() == 'iso-8859-1':
+                    # Prova a rilevare encoding dal content
+                    response.encoding = response.apparent_encoding or 'utf-8'
+
+                logger.info(f"Encoding: {response.encoding}")
+
+                # Parse HTML - usa response.text (già decodificato) invece di response.content
+                soup = BeautifulSoup(response.text, 'lxml')
                 logger.info(f"HTML parsed, title: {soup.title.string if soup.title else 'N/A'}")
 
                 # Rimuovi elementi non utili

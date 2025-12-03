@@ -163,16 +163,33 @@ class ContentAnalyzer:
         current_answer: str,
         top_sources: List[Dict[str, Any]],
         missing_entities: List[Dict[str, str]],
-        max_words: int = 300
+        max_words: int = 300,
+        ai_overview_text: str = ""
     ) -> Optional[Dict[str, Any]]:
         """
         Genera versione ottimizzata della risposta usando LLM
+
+        Args:
+            query: Query/keyword target
+            current_answer: Risposta corrente da ottimizzare
+            top_sources: Top fonti competitor
+            missing_entities: Entità mancanti
+            max_words: Limite parole
+            ai_overview_text: Testo dell'AI Overview di Google (riferimento principale!)
         """
         if not self.openai_client:
             logger.warning("OpenAI non disponibile - skip ottimizzazione LLM")
             return None
 
         logger.info("Generazione risposta ottimizzata con LLM")
+
+        # Formatta AI Overview (RIFERIMENTO PRINCIPALE!)
+        ai_overview_section = ""
+        if ai_overview_text:
+            ai_overview_section = f"""
+**AI OVERVIEW DI GOOGLE** (questo è il riferimento PRINCIPALE - la tua risposta deve coprire questi punti):
+{truncate_text(ai_overview_text, 500)}
+"""
 
         # Formatta top sources
         sources_text = "\n\n".join([
@@ -190,28 +207,28 @@ class ContentAnalyzer:
 
 **RISPOSTA CORRENTE** (da ottimizzare):
 {current_answer}
-
-**TOP 3 RISPOSTE CONCORRENTI** (più rilevanti secondo reranker):
+{ai_overview_section}
+**TOP 3 RISPOSTE CONCORRENTI** (fonti citate nell'AI Overview):
 {sources_text}
 
-**ENTITÀ MANCANTI** (presenti nei competitor):
+**ENTITÀ/CONCETTI MANCANTI** (presenti nell'AI Overview e competitor):
 {entities_text if entities_text else "Nessuna entità mancante significativa"}
 
 **TASK**:
 Genera una versione OTTIMIZZATA della risposta corrente che:
 
-1. Mantiene il tono e stile della risposta originale
-2. Integra le entità mancanti chiave in modo naturale
-3. Copre tutti gli aspetti rilevanti delle risposte competitor
+1. **PRIORITÀ MASSIMA**: Copre TUTTI i punti chiave dell'AI Overview di Google
+2. Mantiene il tono e stile della risposta originale
+3. Integra le entità mancanti chiave in modo naturale
 4. Risponde in modo DIRETTO e COMPLETO alla query
 5. È concisa: massimo {max_words} parole
 6. Include informazioni fattuali e specifiche
 7. Usa un linguaggio chiaro e accessibile
 
 **IMPORTANTE**:
-- NON copiare frasi dai competitor
+- L'AI Overview è il benchmark - la tua risposta deve contenere le stesse informazioni chiave
+- NON copiare frasi, ma assicurati di coprire gli stessi concetti
 - NON aggiungere informazioni non verificabili
-- Mantieni lo stesso livello di autorevolezza
 - Rispondi nella stessa lingua della query
 """
 
@@ -257,7 +274,8 @@ Genera una versione OTTIMIZZATA della risposta corrente che:
         current_answer: str,
         top_sources: List[Dict[str, Any]],
         missing_entities: List[Dict[str, str]],
-        max_words: int = 300
+        max_words: int = 300,
+        ai_overview_text: str = ""
     ) -> Optional[Dict[str, Any]]:
         """Alias per generate_optimized_answer"""
         return self.generate_optimized_answer(
@@ -265,7 +283,8 @@ Genera una versione OTTIMIZZATA della risposta corrente che:
             current_answer=current_answer,
             top_sources=top_sources,
             missing_entities=missing_entities,
-            max_words=max_words
+            max_words=max_words,
+            ai_overview_text=ai_overview_text
         )
 
     def analyze_content_quality(self, text: str) -> Dict[str, Any]:

@@ -103,7 +103,14 @@ class OptimizationController:
 
             ai_overview = serp_data["ai_overview"]
             sources_list = ai_overview.get("sources", []) or []
+            ai_overview_text = ai_overview.get("text", "") or ""  # TESTO DELL'AI OVERVIEW!
+            fan_out_queries = ai_overview.get("fan_out_queries", []) or []
+
             logger.success(f"AI Overview trovato con {len(sources_list)} fonti")
+            logger.info(f"AI Overview text: {len(ai_overview_text)} caratteri")
+
+            if not ai_overview_text:
+                logger.warning("AI Overview text vuoto - procedo comunque")
             
             # === STEP 2: Scrape target URL ===
             logger.info("STEP 2/7: Scraping target URL...")
@@ -143,76 +150,109 @@ class OptimizationController:
             
             # === STEP 4: Calcola relevance scores ===
             logger.info("STEP 4/7: Calcolo relevance scores...")
-            
-            # Prepara items per reranking
-            all_answers = [{"text": target_answer, "url": target_url, "is_target": True}]
-            
-            for source in sources_answers:
-                all_answers.append({
+
+            # IMPORTANTE: Confronta target con testo AI Overview (non solo fonti scraped)
+            reference_text = ai_overview_text if ai_overview_text else keyword
+
+            # Calcola score target vs AI Overview text
+            if ai_overview_text:
+                # Rerank target contro l'AI Overview text
+                comparison_items = [
+                    {"text": target_answer, "type": "target"},
+                    {"text": ai_overview_text, "type": "ai_overview"}
+                ]
+                ranked = self.reranker.rerank(query=keyword, items=comparison_items)
+                target_result = next((r for r in ranked if r.get("type") == "target"), None)
+                target_score = target_result["relevance_score"] if target_result else 0.5
+            else:
+                # Fallback: usa solo keyword come query
+                target_score = 0.5
+
+            logger.success(f"Target relevance score vs AI Overview: {target_score:.3f}")
+
+            # Prepara top sources con info delle fonti scraped
+            top_sources = []
+            for source in sources_answers[:5]:
+                # Calcola score della fonte vs keyword
+                source_ranked = self.reranker.rerank(
+                    query=keyword,
+                    items=[{"text": source["answer"], "url": source["url"]}]
+                )
+                source_score = source_ranked[0]["relevance_score"] if source_ranked else 0.5
+
+                top_sources.append({
                     "text": source["answer"],
                     "url": source["url"],
-                    "is_target": False
+                    "relevance_score": source_score
                 })
-            
-            # Rerank
-            ranked_answers = self.reranker.rerank(
-                query=keyword,
-                items=all_answers
-            )
-            
-            # Separa target da sources
-            target_result = next((r for r in ranked_answers if r.get("is_target")), None)
-            top_sources = [r for r in ranked_answers if not r.get("is_target")][:5]
-            
-            if not target_result:
-                logger.error("Target non trovato nei risultati reranking")
-                return {"success": False, "error": "Errore nel calcolo relevance score"}
-            
-            target_score = target_result["relevance_score"]
-            logger.success(f"Target relevance score: {target_score:.3f}")
             
             # === STEP 5: Calcola similarità semantica ===
             logger.info("STEP 5/7: Calcolo similarità semantica...")
-            
-            # Genera embeddings
-            all_texts = [target_answer] + [s["text"] for s in top_sources]
-            embeddings = self.embeddings.generate_embeddings_batch(all_texts)
-            
-            # Calcola similarità target vs sources
-            target_emb = embeddings[0]
-            sources_emb = embeddings[1:]
-            
-            similarities = []
-            for src_emb in sources_emb:
-                sim = self.embeddings.cosine_similarity(target_emb, src_emb)
-                similarities.append(sim)
-            
-            avg_similarity = sum(similarities) / len(similarities) if similarities else 0
-            
+
+            # Genera embeddings - confronto target vs AI Overview text
+            if ai_overview_text and top_sources:
+                all_texts = [target_answer, ai_overview_text] + [s["text"] for s in top_sources]
+                embeddings = self.embeddings.generate_embeddings_batch(all_texts)
+
+                target_emb = embeddings[0]
+                ai_overview_emb = embeddings[1]
+                sources_emb = embeddings[2:]
+
+                # Similarità target vs AI Overview
+                target_vs_aio_similarity = self.embeddings.cosine_similarity(target_emb, ai_overview_emb)
+                logger.info(f"Target vs AI Overview similarity: {target_vs_aio_similarity:.3f}")
+
+                # Similarità target vs sources
+                similarities = []
+                for src_emb in sources_emb:
+                    sim = self.embeddings.cosine_similarity(target_emb, src_emb)
+                    similarities.append(sim)
+
+                avg_similarity = sum(similarities) / len(similarities) if similarities else 0
+            elif ai_overview_text:
+                # Solo AI Overview, no sources scraped
+                all_texts = [target_answer, ai_overview_text]
+                embeddings = self.embeddings.generate_embeddings_batch(all_texts)
+                target_vs_aio_similarity = self.embeddings.cosine_similarity(embeddings[0], embeddings[1])
+                similarities = []
+                avg_similarity = target_vs_aio_similarity
+            else:
+                target_vs_aio_similarity = 0
+                similarities = []
+                avg_similarity = 0
+
             logger.success(f"Similarità semantica media: {avg_similarity:.3f}")
             
             # === STEP 6: Analisi entità ===
             logger.info("STEP 6/7: Analisi gap entità...")
-            
+
+            # Confronta entità target vs AI Overview text (più accurato!)
+            competitor_texts = []
+            if ai_overview_text:
+                competitor_texts.append(ai_overview_text)  # AI Overview come riferimento principale
+            competitor_texts.extend([s["text"] for s in top_sources[:3]])
+
             gap_analysis = self.analyzer.analyze_entity_gap(
                 target_text=target_answer,
-                competitor_texts=[s["text"] for s in top_sources[:3]]
+                competitor_texts=competitor_texts
             )
-            
+
             missing_entities = gap_analysis["missing_entities"]
             entity_coverage = gap_analysis["entity_coverage"]
-            
+
             logger.success(f"Entity gap: {len(missing_entities)} entità mancanti")
             logger.info(f"Entity coverage: {entity_coverage:.2%}")
             
             # === STEP 7: Ottimizzazione LLM ===
             logger.info("STEP 7/7: Generazione versione ottimizzata...")
-            
+
+            # Passa anche il testo AI Overview per ottimizzazione
             optimized_result = self.analyzer.optimize_answer(
                 query=keyword,
                 current_answer=target_answer,
                 top_sources=top_sources[:3],
-                missing_entities=missing_entities
+                missing_entities=missing_entities,
+                ai_overview_text=ai_overview_text  # IMPORTANTE: riferimento all'AI Overview!
             )
 
             if not optimized_result:
@@ -239,9 +279,6 @@ class OptimizationController:
 
                 logger.success(f"Ottimizzazione completata: +{improvement:.1f}%")
             
-            # === STEP 8: Fan-out queries ===
-            fan_out_queries = ai_overview.get("fan_out_queries", []) or []
-            
             # === RISULTATI FINALI ===
             result = {
                 "success": True,
@@ -251,8 +288,15 @@ class OptimizationController:
                     "location": location,
                     "language": language,
                     "current_relevance_score": float(target_score),
+                    "target_vs_ai_overview_similarity": float(target_vs_aio_similarity),
                     "is_ai_overview_source": target_url in [s.get("url", "") for s in sources_list],
                     "ai_overview_sources_count": len(sources_list)
+                },
+                "ai_overview": {
+                    "text": ai_overview_text,
+                    "text_length": len(ai_overview_text),
+                    "sources_count": len(sources_list),
+                    "fan_out_queries": fan_out_queries
                 },
                 "target_content": {
                     "answer": target_answer,

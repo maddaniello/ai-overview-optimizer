@@ -387,9 +387,27 @@ if 'results' in st.session_state:
         st.write(f"📝 Parole: **{target_content.get('word_count', 0)}**")
         st.write(f"📄 Caratteri: **{target_content.get('char_count', 0)}**")
 
+    # ========== 2.5 AI OVERVIEW TEXT ==========
+    ai_overview_data = results.get("ai_overview", {})
+    ai_overview_text = ai_overview_data.get("text", "")
+
+    if ai_overview_text:
+        st.markdown("---")
+        st.subheader("🤖 AI Overview di Google")
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.success(ai_overview_text)
+        with col2:
+            st.metric("Caratteri", ai_overview_data.get("text_length", 0))
+            st.metric("Fonti citate", ai_overview_data.get("sources_count", 0))
+            # Similarità target vs AI Overview
+            target_vs_aio = analysis.get("target_vs_ai_overview_similarity", 0)
+            st.metric("Similarità Target", f"{target_vs_aio:.1%}")
+
     # ========== 3. TOP SOURCES ==========
     st.markdown("---")
-    st.subheader("🏆 Top Competitor Sources")
+    st.subheader("🏆 Fonti citate nell'AI Overview")
 
     top_sources = results.get("top_sources", [])
 
