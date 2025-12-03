@@ -180,11 +180,21 @@ class OrchestratorAgent(BaseAgent):
                     content = self.scraper.extract_answer(url, state.keyword)
                     if content:
                         source_info = state.ai_overview_sources[i] if i < len(state.ai_overview_sources) else {}
+
+                        # Estrai una "risposta" rilevante dal contenuto (primi 500 caratteri significativi)
+                        response_preview = content[:500].strip()
+                        if len(content) > 500:
+                            # Trova un punto di interruzione naturale
+                            last_period = response_preview.rfind('.')
+                            if last_period > 200:
+                                response_preview = response_preview[:last_period + 1]
+
                         state.competitor_contents.append({
                             "url": url,
                             "domain": source_info.get("domain", url.split("/")[2] if "/" in url else url),
                             "title": source_info.get("title", ""),
                             "content": content,
+                            "response_preview": response_preview,  # Preview della risposta
                             "source_type": "ai_overview",
                             "word_count": len(content.split())
                         })
@@ -217,82 +227,120 @@ class OrchestratorAgent(BaseAgent):
             if state.ai_overview_text:
                 texts_to_embed.append(state.ai_overview_text)
                 text_metadata.append({
-                    "type": "ai_overview_primary",
+                    "type": "reference",
                     "label": "AI Overview Google",
-                    "url": None
+                    "url": None,
+                    "is_reference": True
                 })
+                self.log("Riferimento: AI Overview di Google", level="info")
 
-            # Risposta corrente utente
+            # Risposta corrente utente (se presente)
             if state.current_answer:
                 texts_to_embed.append(state.current_answer)
                 text_metadata.append({
                     "type": "user_answer",
-                    "label": "Risposta Utente",
-                    "url": state.target_url
+                    "label": "La Tua Risposta",
+                    "url": state.target_url,
+                    "is_reference": False
                 })
+                self.log(f"Tua risposta: {len(state.current_answer.split())} parole", level="info")
 
-            # Competitor
-            for comp in state.competitor_contents:
-                texts_to_embed.append(comp["content"])
+            # Competitor da AI Overview
+            for i, comp in enumerate(state.competitor_contents):
+                # Usa response_preview se disponibile, altrimenti content troncato
+                content_for_embedding = comp.get("response_preview", comp["content"][:500])
+                texts_to_embed.append(content_for_embedding)
                 text_metadata.append({
                     "type": "competitor",
-                    "label": comp["domain"],
-                    "url": comp["url"]
+                    "label": f"Competitor: {comp['domain']}",
+                    "url": comp["url"],
+                    "domain": comp["domain"],
+                    "title": comp.get("title", ""),
+                    "response_preview": comp.get("response_preview", content_for_embedding[:200]),
+                    "is_reference": False
                 })
+                self.log(f"Competitor {i+1}: {comp['domain']} ({comp['word_count']} parole)", level="info")
 
             if len(texts_to_embed) < 2:
                 self.log("Non abbastanza testi per ranking", level="warning")
                 return state
 
             # Genera embeddings
-            self.log(f"Generazione embeddings per {len(texts_to_embed)} testi...", level="info")
+            self.log(f"Generazione embeddings per {len(texts_to_embed)} contenuti...", level="info")
             embeddings = self.embeddings.get_embeddings_batch(texts_to_embed)
+            self.log("Embeddings generati", level="success")
 
-            # Calcola similarità vs keyword (primo è AI Overview se presente)
+            # Calcola similarità vs AI Overview (primo elemento)
             import numpy as np
 
-            reference_idx = 0  # AI Overview o primo disponibile
+            reference_idx = 0  # AI Overview è sempre il riferimento
             reference_emb = np.array(embeddings[reference_idx])
 
             ranking = []
             for i, (emb, meta) in enumerate(zip(embeddings, text_metadata)):
-                if i == reference_idx and meta["type"] == "ai_overview_primary":
+                if meta.get("is_reference"):
                     # AI Overview è il riferimento, score = 1.0
                     score = 1.0
                 else:
                     emb_arr = np.array(emb)
                     score = float(np.dot(reference_emb, emb_arr) / (np.linalg.norm(reference_emb) * np.linalg.norm(emb_arr)))
 
-                ranking.append({
+                ranking_item = {
                     "rank": 0,  # Sarà calcolato dopo
                     "type": meta["type"],
                     "label": meta["label"],
-                    "url": meta["url"],
+                    "url": meta.get("url"),
                     "score": round(score, 4),
-                    "preview": texts_to_embed[i][:150] + "..."
-                })
+                    "preview": texts_to_embed[i][:200] + "..." if len(texts_to_embed[i]) > 200 else texts_to_embed[i],
+                    "is_reference": meta.get("is_reference", False)
+                }
 
-            # Ordina per score
-            ranking.sort(key=lambda x: x["score"], reverse=True)
+                # Aggiungi response_preview per competitor
+                if meta["type"] == "competitor":
+                    ranking_item["response_preview"] = meta.get("response_preview", "")
+                    ranking_item["domain"] = meta.get("domain", "")
+                    ranking_item["title"] = meta.get("title", "")
+
+                ranking.append(ranking_item)
+
+            # Ordina per score (escluso reference che è sempre primo)
+            ranking.sort(key=lambda x: (not x.get("is_reference", False), -x["score"]))
             for i, item in enumerate(ranking):
                 item["rank"] = i + 1
 
             state.initial_ranking = ranking
-            state.current_ranking = ranking.copy()
+            state.current_ranking = [r.copy() for r in ranking]
 
-            # Log ranking
-            self.log("RANKING INIZIALE:", level="info")
-            for item in ranking[:5]:
-                self.log(f"  #{item['rank']} [{item['type']}] {item['label']}: {item['score']:.4f}", level="info")
+            # Log ranking dettagliato
+            self.log("=" * 40, level="info")
+            self.log("RANKING INIZIALE (vs AI Overview):", level="info")
+            self.log("=" * 40, level="info")
 
-            # Trova score utente
+            for item in ranking:
+                type_emoji = {
+                    "reference": "🎯",
+                    "user_answer": "📝",
+                    "competitor": "🏢"
+                }.get(item["type"], "•")
+
+                self.log(
+                    f"  #{item['rank']} {type_emoji} {item['label']}: {item['score']:.4f}",
+                    level="success" if item["type"] == "user_answer" else "info"
+                )
+
+            # Trova e salva score utente iniziale
             user_item = next((r for r in ranking if r["type"] == "user_answer"), None)
             if user_item:
                 state.best_score = user_item["score"]
-                self.log(f"Score iniziale utente: {state.best_score:.4f}", level="info")
+                user_rank = user_item["rank"]
+                total_competitors = len([r for r in ranking if r["type"] == "competitor"])
+                self.log(f"\n📊 La tua posizione: #{user_rank} su {total_competitors + 1} contenuti", level="info")
+                self.log(f"📈 Score iniziale: {state.best_score:.4f}", level="info")
 
         except Exception as e:
             self.log(f"Errore calcolo ranking: {e}", level="error")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", level="error")
 
         return state
 
@@ -378,36 +426,72 @@ class OrchestratorAgent(BaseAgent):
             context_parts = []
 
             if state.ai_overview_text:
-                context_parts.append(f"AI OVERVIEW GOOGLE:\n{state.ai_overview_text}")
+                context_parts.append(f"AI OVERVIEW GOOGLE (riferimento da battere):\n{state.ai_overview_text}")
 
             if state.competitor_contents:
                 comp_text = "\n\n".join([
-                    f"FONTE {i+1} ({c['domain']}):\n{c['content'][:300]}..."
+                    f"COMPETITOR {i+1} ({c['domain']}):\n{c.get('response_preview', c['content'][:300])}"
                     for i, c in enumerate(state.competitor_contents[:3])
                 ])
-                context_parts.append(f"TOP COMPETITOR:\n{comp_text}")
+                context_parts.append(f"RISPOSTE DEI COMPETITOR:\n{comp_text}")
+
+            # Aggiungi storia delle iterazioni precedenti se non è la prima
+            if iteration > 1 and state.iterations:
+                prev_iterations = []
+                for prev in state.iterations[-2:]:  # Ultime 2 iterazioni
+                    prev_iterations.append(
+                        f"Iterazione {prev['iteration']} (score: {prev['score']:.4f}):\n"
+                        f"Ragionamento: {prev['reasoning'][:200]}..."
+                    )
+                if prev_iterations:
+                    context_parts.append(f"ITERAZIONI PRECEDENTI:\n" + "\n\n".join(prev_iterations))
 
             context = "\n\n---\n\n".join(context_parts)
 
-            # Prompt per ottimizzazione
-            prompt = f"""KEYWORD: {state.keyword}
+            # Prompt diverso per prima iterazione vs successive
+            if iteration == 1:
+                prompt = f"""KEYWORD: {state.keyword}
 
-RISPOSTA CORRENTE (iterazione {iteration}):
+RISPOSTA INIZIALE DA OTTIMIZZARE:
 {current_answer}
 
-OBIETTIVO: Ottimizza questa risposta per:
-1. Coprire tutti i punti chiave dell'AI Overview di Google
-2. Essere più rilevante e completa dei competitor
-3. Mantenere massimo 300 parole
-4. Usare linguaggio chiaro e autorevole
+OBIETTIVO: Crea la PRIMA versione ottimizzata di questa risposta per:
+1. Coprire TUTTI i punti chiave presenti nell'AI Overview di Google
+2. Essere più completa e rilevante delle risposte dei competitor
+3. Massimo 300 parole
+4. Linguaggio chiaro, autorevole, diretto
 
-Spiega il tuo ragionamento e poi fornisci la risposta ottimizzata."""
+FORMATO OUTPUT:
+Prima spiega il tuo RAGIONAMENTO (cosa manca, cosa migliorare, strategia)
+Poi scrivi la RISPOSTA OTTIMIZZATA completa."""
+            else:
+                prev_score = state.iterations[-1]['score'] if state.iterations else 0
+                prompt = f"""KEYWORD: {state.keyword}
+
+ITERAZIONE {iteration} - Devi MIGLIORARE la risposta dell'iterazione precedente.
+
+RISPOSTA PRECEDENTE (iterazione {iteration-1}, score: {prev_score:.4f}):
+{current_answer}
+
+OBIETTIVO: Migliora ULTERIORMENTE questa risposta per:
+1. Aumentare la similarità semantica con l'AI Overview di Google
+2. Colmare eventuali GAP rispetto ai competitor
+3. Migliorare chiarezza e autorevolezza
+4. Massimo 300 parole
+
+IMPORTANTE: Devi produrre una risposta MIGLIORE della precedente, non riscriverla da zero.
+
+FORMATO OUTPUT:
+Prima spiega il tuo RAGIONAMENTO (cosa non funzionava, cosa hai migliorato)
+Poi scrivi la RISPOSTA OTTIMIZZATA MIGLIORATA."""
+
+            self.log(f"Generando ottimizzazione iterazione {iteration}...", level="info")
 
             result = self.llm_client.generate_with_reasoning(
                 prompt=prompt,
                 context=context,
                 task_description=f"Ottimizzazione iterazione {iteration}",
-                temperature=0.7
+                temperature=0.7 if iteration == 1 else 0.5  # Meno creatività nelle iterazioni successive
             )
 
             return result
