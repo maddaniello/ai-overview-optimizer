@@ -1,0 +1,35 @@
+[theme]
+# Branding Moca Interactive
+primaryColor = "#E52217"        # Rosso Moca
+backgroundColor = "#FFFFFF"     # Bianco
+secondaryBackgroundColor = "#FFE7E6"  # Rosa chiaro
+textColor = "#191919"           # Nero
+font = "sans serif"             # Figtree viene caricato via CSS custom
+
+[server]
+# Server configuration
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+
+[browser]
+# Browser configuration
+gatherUsageStats = false
+serverAddress = "localhost"
+serverPort = 8501
+
+[runner]
+# Execution configuration
+magicEnabled = true
+fastReruns = true
+
+[client]
+# Client configuration
+showErrorDetails = true
+toolbarMode = "minimal"
+
+[logger]
+# Logging configuration
+level = "info"
+messageFormat = "%(asctime)s %(message)s"
