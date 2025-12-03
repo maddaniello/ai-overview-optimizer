@@ -1,60 +1,79 @@
 """
-Optimization Controller - Orchestra il workflow completo di ottimizzazione
+Optimization Controller - Orchestratore workflow completo
 """
-import asyncio
-from typing import Dict, List, Any, Optional
-from datetime import datetime
-
+from typing import Dict, Any, Optional
 from models.dataforseo_client import DataForSEOClient
-from models.scraper import WebScraper
+from models.scraper import ContentScraper
 from models.reranker_client import RerankerClient
 from models.embeddings import EmbeddingsClient
 from models.content_analyzer import ContentAnalyzer
-
-from utils.logger import get_logger
-from utils.helpers import extract_domain, calculate_improvement_percentage
-
-logger = get_logger(__name__)
-
+from utils.logger import logger
+from config import LOCATION_CODES, LANGUAGE_CODES
 
 class OptimizationController:
-    """Controller principale per ottimizzazione contenuti"""
+    """Controller principale per workflow ottimizzazione"""
     
-    def __init__(self):
-        """Inizializza tutti i client necessari"""
-        logger.info("🚀 Inizializzazione Optimization Controller")
+    def __init__(
+        self,
+        dataforseo_login: str,
+        dataforseo_password: str,
+        openai_api_key: str,
+        jina_api_key: str,
+        reranker_provider: str = "jina"
+    ):
+        """
+        Inizializza controller con credenziali utente
         
-        self.dataforseo = DataForSEOClient()
-        self.scraper = WebScraper(use_crawl4ai=True)
-        self.reranker = RerankerClient()
-        self.embeddings = EmbeddingsClient()
-        self.analyzer = ContentAnalyzer()
+        Args:
+            dataforseo_login: DataForSEO login
+            dataforseo_password: DataForSEO password
+            openai_api_key: OpenAI API key
+            jina_api_key: Jina API key
+            reranker_provider: "jina" o "google"
+        """
+        logger.info("Inizializzazione OptimizationController")
         
-        logger.info("✓ Controller inizializzato")
+        # Initialize clients with user credentials
+        self.dataforseo = DataForSEOClient(
+            login=dataforseo_login,
+            password=dataforseo_password
+        )
+        
+        self.scraper = ContentScraper()
+        
+        self.reranker = RerankerClient(
+            provider=reranker_provider,
+            jina_api_key=jina_api_key if reranker_provider == "jina" else None
+        )
+        
+        self.embeddings = EmbeddingsClient(api_key=openai_api_key)
+        
+        self.analyzer = ContentAnalyzer(openai_api_key=openai_api_key)
+        
+        logger.success("Controller inizializzato con successo")
     
-    async def optimize_content(
+    def optimize_content(
         self,
         target_url: str,
         keyword: str,
         location: str = "Italy",
         language: str = "Italian",
-        max_sources: int = 5,
-        include_fan_out: bool = True
+        max_sources: int = 5
     ) -> Dict[str, Any]:
         """
-        Workflow completo di ottimizzazione contenuto
+        Esegue workflow completo di ottimizzazione
         
         Args:
-            target_url: URL della pagina da ottimizzare
+            target_url: URL pagina da ottimizzare
             keyword: Keyword target
-            location: Località di ricerca
-            language: Lingua
-            max_sources: Numero massimo di fonti AI Overview da analizzare
-            include_fan_out: Se includere analisi fan-out queries
+            location: Location name (es: "Italy")
+            language: Language name (es: "Italian")
+            max_sources: Numero massimo fonti da analizzare
             
         Returns:
-            Dict con risultati completi dell'analisi
+            Dict con risultati analisi completa
         """
+        # ... resto del codice rimane uguale
         logger.info(f"\n{'='*80}")
         logger.info(f"🎯 INIZIO OTTIMIZZAZIONE")
         logger.info(f"URL: {target_url}")
