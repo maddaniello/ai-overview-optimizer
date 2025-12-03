@@ -157,6 +157,16 @@ MOCA_COLORS = {
 
 MOCA_LOGO_URL = "https://mocainteractive.com/wp-content/uploads/2025/04/cropped-moca-instagram-icona-1-192x192.png"
 
+# ==================== GOOGLE CLOUD RANKING ====================
+# Google Discovery Engine Ranking API
+# Pricing: $1 per 1,000 queries | Free tier: 10,000 queries/month
+GOOGLE_RANKING_MODEL = "semantic-ranker-default@latest"
+GOOGLE_RANKING_LOCATION = "global"
+
+# ==================== RANKING METHOD ====================
+# Options: "embeddings" (OpenAI), "google" (Google Ranking API)
+DEFAULT_RANKING_METHOD = "embeddings"
+
 # ==================== RATE LIMITS ====================
 RATE_LIMITS = {
     "dataforseo": {"calls": 5, "period": 60},
@@ -164,6 +174,7 @@ RATE_LIMITS = {
     "gemini": {"calls": 60, "period": 60},
     "jina": {"calls": 100, "period": 60},
     "scraping": {"calls": 10, "period": 60},
+    "google_ranking": {"calls": 100, "period": 60},
 }
 
 # ==================== LOGGING ====================

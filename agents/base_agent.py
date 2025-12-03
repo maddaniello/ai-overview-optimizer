@@ -61,6 +61,11 @@ class AgentState:
     dataforseo_login: str = ""
     dataforseo_password: str = ""
 
+    # Google Cloud Ranking (optional)
+    google_project_id: str = ""
+    google_credentials_json: str = ""
+    ranking_method: str = "embeddings"  # "embeddings" or "google"
+
     # SERP Data
     serp_data: Optional[Dict] = None
     ai_overview_text: str = ""

@@ -208,22 +208,20 @@ class LLMClient:
         system_prompt = """Sei un esperto SEO content strategist italiano.
 
 REGOLE FONDAMENTALI:
-1. Scrivi SEMPRE in italiano
-2. Genera contenuti ORIGINALI, non copiare/incollare testo esistente
-3. La risposta deve essere NUOVA e ottimizzata, non l'input riformattato
+1. Scrivi SEMPRE in italiano fluente e naturale
+2. Genera contenuti ORIGINALI e di alta qualità
+3. Mantieni la formattazione pulita con paragrafi separati da righe vuote
 
-FORMATO OUTPUT OBBLIGATORIO:
+FORMATO OUTPUT:
 
-## RAGIONAMENTO
-Spiega in 3-5 punti:
-- Cosa manca o va migliorato
-- Quali elementi dell'AI Overview coprire
-- Strategia di ottimizzazione
+[RAGIONAMENTO]
+Spiega brevemente (2-3 frasi) la strategia di ottimizzazione.
 
-## RISPOSTA OTTIMIZZATA
-[Scrivi qui la risposta COMPLETAMENTE NUOVA e ottimizzata - massimo 300 parole]
-
-IMPORTANTE: La sezione RISPOSTA OTTIMIZZATA deve contenere SOLO il testo finale ottimizzato, senza titoli, senza intestazioni, senza markup HTML."""
+[RISPOSTA]
+Scrivi la risposta ottimizzata completa (200-300 parole).
+Usa paragrafi ben separati.
+Non usare elenchi puntati, titoli o markdown.
+Scrivi in modo fluido e naturale."""
 
         full_prompt = f"""
 {f"CONTESTO:\n{context}\n" if context else ""}
@@ -235,63 +233,106 @@ IMPORTANTE: La sezione RISPOSTA OTTIMIZZATA deve contenere SOLO il testo finale 
             messages=[{"role": "user", "content": full_prompt}],
             system_prompt=system_prompt,
             temperature=temperature,
-            max_tokens=2000  # Assicura spazio sufficiente per risposta completa
+            max_tokens=2500  # Spazio sufficiente per risposta completa
         )
 
-        # Estrai ragionamento e risposta con parsing migliorato
+        # Parse response to extract reasoning and answer
         reasoning = ""
         answer = ""
 
-        # Cerca le sezioni nel response
-        response_lower = response.lower()
+        # Look for markers
+        response_text = response.strip()
 
-        # Trova inizio ragionamento
-        reasoning_markers = ["## ragionamento", "**ragionamento**", "ragionamento:"]
-        answer_markers = ["## risposta ottimizzata", "## risposta", "**risposta ottimizzata**", "**risposta**", "risposta ottimizzata:"]
+        # Try structured markers first
+        if "[RAGIONAMENTO]" in response_text and "[RISPOSTA]" in response_text:
+            parts = response_text.split("[RISPOSTA]")
+            reasoning_part = parts[0]
+            answer = parts[1].strip() if len(parts) > 1 else ""
 
-        reasoning_start = -1
-        answer_start = -1
+            # Clean reasoning
+            reasoning = reasoning_part.replace("[RAGIONAMENTO]", "").strip()
 
-        for marker in reasoning_markers:
-            pos = response_lower.find(marker)
-            if pos != -1:
-                reasoning_start = pos + len(marker)
-                break
+        # Try ## markers
+        elif "## RAGIONAMENTO" in response_text or "## RISPOSTA" in response_text:
+            if "## RISPOSTA" in response_text:
+                parts = response_text.split("## RISPOSTA")
+                reasoning_part = parts[0]
+                answer = parts[1].strip() if len(parts) > 1 else ""
+                reasoning = reasoning_part.replace("## RAGIONAMENTO", "").strip()
+            else:
+                answer = response_text
 
-        for marker in answer_markers:
-            pos = response_lower.find(marker)
-            if pos != -1:
-                answer_start = pos + len(marker)
-                break
+        # Try ** markers
+        elif "**RAGIONAMENTO**" in response_text or "**RISPOSTA**" in response_text:
+            if "**RISPOSTA**" in response_text:
+                parts = response_text.split("**RISPOSTA**")
+                reasoning_part = parts[0]
+                answer = parts[1].strip() if len(parts) > 1 else ""
+                reasoning = reasoning_part.replace("**RAGIONAMENTO**", "").strip()
+            else:
+                answer = response_text
 
-        if reasoning_start != -1 and answer_start != -1:
-            # Estrai ragionamento (tra reasoning_start e answer_start)
-            reasoning_end = response_lower.find("## risposta") if "## risposta" in response_lower else answer_start
-            reasoning = response[reasoning_start:reasoning_end].strip()
-            # Pulisci eventuali marker residui
-            reasoning = reasoning.replace("##", "").strip()
-
-            # Estrai risposta (da answer_start fino alla fine)
-            answer = response[answer_start:].strip()
-            # Rimuovi eventuali marker o asterischi iniziali
-            if answer.startswith("**"):
-                answer = answer.split("**", 2)[-1].strip()
         else:
-            # Fallback: usa tutto come answer
-            answer = response.strip()
-            reasoning = "Ragionamento non strutturato disponibile."
+            # No clear structure - try to find answer by looking for substantive content
+            lines = response_text.split('\n')
+            content_lines = []
+            reasoning_lines = []
+            in_content = False
 
-        # Pulizia finale della risposta
-        # Rimuovi linee che sembrano titoli/header
-        clean_lines = []
-        for line in answer.split('\n'):
-            line = line.strip()
-            # Salta linee che sembrano header
-            if line.startswith('#') or line.startswith('**') and line.endswith('**'):
-                continue
-            if line:
-                clean_lines.append(line)
-        answer = '\n'.join(clean_lines)
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    if content_lines:
+                        content_lines.append('')
+                    continue
+
+                # Skip header-like lines
+                if line.startswith('#') or (line.startswith('**') and line.endswith('**')):
+                    continue
+
+                # Detect reasoning vs content
+                if any(kw in line.lower() for kw in ['strategia', 'ottimizz', 'miglior', 'aggiung']):
+                    if not in_content:
+                        reasoning_lines.append(line)
+                        continue
+
+                in_content = True
+                content_lines.append(line)
+
+            answer = '\n'.join(content_lines).strip()
+            reasoning = ' '.join(reasoning_lines).strip() or "Ottimizzazione basata su analisi semantica."
+
+        # Clean up answer - preserve paragraph structure
+        if answer:
+            # Remove any remaining markdown
+            answer = answer.replace('**', '').replace('##', '').replace('# ', '')
+
+            # Clean up but preserve paragraph breaks
+            paragraphs = []
+            current_para = []
+
+            for line in answer.split('\n'):
+                line = line.strip()
+                if not line:
+                    if current_para:
+                        paragraphs.append(' '.join(current_para))
+                        current_para = []
+                else:
+                    # Skip lines that look like headers
+                    if line.startswith('#') or line.startswith('*'):
+                        continue
+                    current_para.append(line)
+
+            if current_para:
+                paragraphs.append(' '.join(current_para))
+
+            answer = '\n\n'.join(paragraphs)
+
+        # Ensure we have something
+        if not answer:
+            answer = response_text
+        if not reasoning:
+            reasoning = "Ottimizzazione semantica applicata."
 
         return {
             "reasoning": reasoning,
