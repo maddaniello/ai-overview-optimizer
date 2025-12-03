@@ -28,12 +28,3 @@ loguru==0.7.2
 
 # HTTP Client
 aiohttp==3.9.1
-```
-
----
-
-## 📝 CREA FILE `packages.txt` (per Streamlit Cloud)
-
-Crea un nuovo file chiamato `packages.txt` nella root:
-```
-build-essential
