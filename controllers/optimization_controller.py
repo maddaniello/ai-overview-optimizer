@@ -195,7 +195,7 @@ class OptimizationController:
             )
             
             missing_entities = gap_analysis["missing_entities"]
-            entity_coverage = gap_analysis["coverage"]
+            entity_coverage = gap_analysis["entity_coverage"]
             
             logger.success(f"Entity gap: {len(missing_entities)} entità mancanti")
             logger.info(f"Entity coverage: {entity_coverage:.2%}")
