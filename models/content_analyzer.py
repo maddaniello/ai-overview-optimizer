@@ -1,50 +1,37 @@
 """
-Content Analyzer - Business Logic per analisi contenuti
-Gestisce:
-- Analisi entità con spaCy
-- Identificazione gap
-- Generazione ottimizzazioni con LLM
+Content Analyzer - Analisi entità e ottimizzazione LLM
 """
-from typing import List, Dict, Any, Optional
+import spacy
 from collections import Counter
-from openai import OpenAI
-from utils.logger import get_logger
-from utils.helpers import truncate_text, count_words
-from config import openai_config
-
-logger = get_logger(__name__)
-
-# Import opzionale di spaCy
-try:
-    import spacy
-    SPACY_AVAILABLE = True
-    logger.info("✓ spaCy disponibile")
-except ImportError:
-    SPACY_AVAILABLE = False
-    logger.warning("✗ spaCy non disponibile - analisi entità limitata")
-
+from typing import List, Dict, Tuple
+from openai import OpenAI  # ⬅️ IMPORT CORRETTO
+from utils.logger import logger
+from config import OPENAI_CHAT_MODEL, MAX_ANSWER_LENGTH
 
 class ContentAnalyzer:
-    """Analizzatore di contenuti per ottimizzazione AI Overview"""
+    """Analizzatore contenuti con NER e LLM"""
     
-    def __init__(self, language: str = "it"):
+    def __init__(self, openai_api_key: str):
         """
+        Inizializza analyzer
+        
         Args:
-            language: Codice lingua (it, en, etc.)
+            openai_api_key: OpenAI API key
         """
-        self.language = language
-        self.nlp = None
+        # OpenAI client
+        self.openai_client = OpenAI(api_key=openai_api_key)
         
-        # Carica modello spaCy se disponibile
-        if SPACY_AVAILABLE:
-            self._load_spacy_model()
+        # SpaCy model
+        try:
+            self.nlp = spacy.load("it_core_news_sm")  # ⬅️ USA MODELLO SMALL
+            logger.success("SpaCy model caricato: it_core_news_sm")
+        except OSError:
+            logger.warning("Modello it_core_news_sm non trovato, scarico...")
+            import subprocess
+            subprocess.run(["python", "-m", "spacy", "download", "it_core_news_sm"])
+            self.nlp = spacy.load("it_core_news_sm")
         
-        # Inizializza OpenAI client
-        if openai_config.api_key:
-            self.openai_client = OpenAI(api_key=openai_config.api_key)
-        else:
-            self.openai_client = None
-            logger.warning("OpenAI API key non configurata - funzionalità LLM disabilitate")
+        logger.info("ContentAnalyzer inizializzato")
     
     def _load_spacy_model(self):
         """Carica modello spaCy per la lingua specificata"""
