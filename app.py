@@ -1,5 +1,5 @@
 """
-AI Overview Content Optimizer - Streamlit Interface
+AI Overview Content Optimizer v2.0 - Multi-Agent System
 Developed by Moca Interactive
 """
 import streamlit as st
@@ -8,21 +8,36 @@ import sys
 import json
 import pandas as pd
 from datetime import datetime
+import asyncio
+from typing import Dict, Any, List
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from controllers.optimization_controller import OptimizationController
+from agents.base_agent import AgentState
+from agents.orchestrator import OrchestratorAgent
 from utils.logger import logger
-from config import MOCA_COLORS
+from config import (
+    MOCA_COLORS, MOCA_LOGO_URL, ALL_MODELS, OPENAI_MODELS, GEMINI_MODELS,
+    LOCATION_CODES, LANGUAGE_CODES, DEFAULT_ITERATIONS, MAX_ITERATIONS,
+    DEFAULT_SERP_RESULTS, MAX_SERP_RESULTS, MAX_SOURCES
+)
 
 # ==================== PAGE CONFIG ====================
 st.set_page_config(
-    page_title="AI Overview Content Optimizer | Moca",
-    page_icon="🔍",
+    page_title="AI Overview Optimizer v2.0 | Moca",
+    page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ==================== SESSION STATE ====================
+if 'logs' not in st.session_state:
+    st.session_state.logs = []
+if 'results' not in st.session_state:
+    st.session_state.results = None
+if 'running' not in st.session_state:
+    st.session_state.running = False
 
 # ==================== CUSTOM CSS ====================
 st.markdown(f"""
@@ -55,74 +70,128 @@ st.markdown(f"""
         background-color: #c41d13;
     }}
 
-    .stProgress > div > div {{
-        background-color: {MOCA_COLORS['primary']};
+    .log-container {{
+        background-color: #1a1a2e;
+        color: #16c784;
+        font-family: 'Monaco', 'Consolas', monospace;
+        font-size: 0.75rem;
+        padding: 10px;
+        border-radius: 8px;
+        max-height: 400px;
+        overflow-y: auto;
     }}
 
-    .sidebar .sidebar-content {{
-        background-color: {MOCA_COLORS['secondary']};
-    }}
+    .log-info {{ color: #3b82f6; }}
+    .log-success {{ color: #10b981; }}
+    .log-warning {{ color: #f59e0b; }}
+    .log-error {{ color: #ef4444; }}
 
-    .stAlert {{
+    .iteration-card {{
+        background: linear-gradient(135deg, {MOCA_COLORS['secondary']} 0%, #fff 100%);
         border-left: 4px solid {MOCA_COLORS['primary']};
+        padding: 15px;
+        margin: 10px 0;
+        border-radius: 8px;
     }}
 
-    [data-testid="stMetricValue"] {{
-        color: {MOCA_COLORS['primary']};
-        font-size: 2rem;
-        font-weight: 700;
+    .ranking-table {{
+        width: 100%;
+        border-collapse: collapse;
     }}
 
-    .stTabs [data-baseweb="tab-list"] {{
-        gap: 8px;
-    }}
-
-    .stTabs [data-baseweb="tab"] {{
-        background-color: {MOCA_COLORS['secondary']};
-        color: #191919;
-        font-weight: 600;
-        border-radius: 8px 8px 0 0;
-    }}
-
-    .stTabs [aria-selected="true"] {{
+    .ranking-table th {{
         background-color: {MOCA_COLORS['primary']};
         color: white;
+        padding: 10px;
+        text-align: left;
     }}
 
-    .entity-tag {{
-        display: inline-block;
+    .ranking-table td {{
+        padding: 8px;
+        border-bottom: 1px solid #eee;
+    }}
+
+    .ranking-table tr:hover {{
         background-color: {MOCA_COLORS['secondary']};
-        color: {MOCA_COLORS['dark']};
-        padding: 4px 12px;
-        border-radius: 16px;
-        margin: 4px;
+    }}
+
+    .metric-card {{
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 20px;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }}
+
+    .metric-value {{
+        font-size: 2rem;
+        font-weight: 700;
+        color: {MOCA_COLORS['primary']};
+    }}
+
+    .metric-label {{
         font-size: 0.9rem;
+        color: {MOCA_COLORS['gray']};
     }}
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== HEADER ====================
-col1, col2 = st.columns([1, 10])
-with col1:
-    st.image(
-        "https://mocainteractive.com/wp-content/uploads/2025/04/cropped-moca-instagram-icona-1-192x192.png",
-        width=60
-    )
-with col2:
-    st.title("🔍 AI Overview Content Optimizer")
-    st.markdown("**Ottimizza contenuti per Google AI Overview** | by [Moca Interactive](https://mocainteractive.com)")
+# ==================== HELPER FUNCTIONS ====================
+def add_log(message: str, level: str = "info", agent: str = "system"):
+    """Aggiunge un log alla sessione"""
+    log_entry = {
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "agent": agent,
+        "level": level,
+        "message": message
+    }
+    st.session_state.logs.append(log_entry)
 
-st.divider()
 
-# ==================== SIDEBAR - CREDENZIALI ====================
+def log_callback(log_entry: Dict):
+    """Callback per ricevere log dagli agenti"""
+    st.session_state.logs.append({
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "agent": log_entry.get("agent", "agent"),
+        "level": log_entry.get("level", "info"),
+        "message": log_entry.get("message", "")
+    })
+
+
+def render_logs():
+    """Renderizza i log in formato console"""
+    if not st.session_state.logs:
+        return ""
+
+    html_lines = []
+    for log in st.session_state.logs[-50:]:  # Ultimi 50 log
+        level_class = f"log-{log['level']}"
+        html_lines.append(
+            f'<span style="color:#666">[{log["timestamp"]}]</span> '
+            f'<span class="{level_class}">[{log["agent"].upper()}]</span> '
+            f'{log["message"]}'
+        )
+
+    return "<br>".join(html_lines)
+
+
+async def run_optimization(state: AgentState):
+    """Esegue il workflow di ottimizzazione"""
+    orchestrator = OrchestratorAgent(log_callback=log_callback)
+    result_state = await orchestrator.run(state)
+    return result_state
+
+
+# ==================== SIDEBAR ====================
 with st.sidebar:
-    st.image(
-        "https://mocainteractive.com/wp-content/uploads/2025/04/cropped-moca-instagram-icona-1-192x192.png",
-        width=80
-    )
-    st.markdown("## 🔐 Configurazione")
+    st.image(MOCA_LOGO_URL, width=80)
+    st.markdown("# 🚀 AI Overview Optimizer")
+    st.markdown("**v2.0 - Multi-Agent System**")
 
-    # ===== SEZIONE API KEYS =====
+    st.divider()
+
+    # ===== API KEYS =====
     with st.expander("🔑 API Keys", expanded=True):
         st.markdown("### DataForSEO")
         dataforseo_login = st.text_input(
@@ -143,91 +212,127 @@ with st.sidebar:
         openai_key = st.text_input(
             "API Key",
             type="password",
-            help="Formato: sk-...",
+            help="Obbligatoria per embeddings. Formato: sk-...",
             key="openai_key"
         )
 
         st.markdown("---")
-        st.markdown("### Jina AI (Opzionale)")
-        jina_key = st.text_input(
+        st.markdown("### Google Gemini (Opzionale)")
+        gemini_key = st.text_input(
             "API Key",
             type="password",
-            help="Opzionale - lascia vuoto per usare OpenAI Embeddings",
-            key="jina_key"
+            help="Solo se vuoi usare modelli Gemini",
+            key="gemini_key"
         )
 
-        # Selezione provider reranker
-        reranker_provider = "jina" if jina_key else "embeddings"
-        if jina_key:
-            st.caption("✅ Jina Reranker attivo")
-        else:
-            st.caption("ℹ️ Usando OpenAI Embeddings per reranking")
+    st.divider()
 
-    # ===== VALIDAZIONE CREDENZIALI =====
-    credentials_valid = all([
-        dataforseo_login,
-        dataforseo_password,
-        openai_key
-    ])
+    # ===== MODEL SELECTION =====
+    st.markdown("## 🤖 Modello AI")
 
-    if not credentials_valid:
-        st.warning("⚠️ Inserisci DataForSEO e OpenAI keys per continuare")
+    # Crea lista modelli disponibili
+    available_models = {}
+    if openai_key:
+        available_models.update(OPENAI_MODELS)
+    if gemini_key:
+        available_models.update(GEMINI_MODELS)
+
+    if not available_models:
+        st.warning("Inserisci almeno una API key per selezionare un modello")
+        model_options = list(OPENAI_MODELS.keys())
     else:
-        st.success("✅ Credenziali configurate")
+        model_options = list(available_models.keys())
+
+    selected_model = st.selectbox(
+        "Seleziona modello",
+        options=model_options,
+        format_func=lambda x: f"{ALL_MODELS[x]['name']} ({ALL_MODELS[x]['provider'].upper()})",
+        help="Modello da usare per ottimizzazione"
+    )
+
+    model_info = ALL_MODELS.get(selected_model, {})
+    st.caption(f"ℹ️ {model_info.get('description', '')}")
 
     st.divider()
 
     # ===== PARAMETRI ANALISI =====
     st.markdown("## ⚙️ Parametri Analisi")
 
+    keyword = st.text_input(
+        "🔍 Keyword *",
+        placeholder="mutuo partita iva",
+        help="Keyword da analizzare (obbligatoria)"
+    )
+
     target_url = st.text_input(
-        "🔗 URL Target",
+        "🔗 URL Target (opzionale)",
         placeholder="https://example.com/article",
         help="URL della pagina da ottimizzare"
     )
 
-    keyword = st.text_input(
-        "🔍 Keyword",
-        placeholder="come rinnovare il passaporto",
-        help="Keyword principale da analizzare"
+    user_answer = st.text_area(
+        "📝 La tua risposta (opzionale)",
+        placeholder="Inserisci qui la tua risposta attuale se ne hai già una...",
+        help="Se hai già un contenuto, inseriscilo qui",
+        height=100
     )
 
     col_loc, col_lang = st.columns(2)
     with col_loc:
         location = st.selectbox(
             "📍 Location",
-            ["Italy", "United States", "United Kingdom", "Germany", "France", "Spain"],
+            options=list(LOCATION_CODES.keys()),
             index=0
         )
 
     with col_lang:
         language = st.selectbox(
             "🌐 Language",
-            ["Italian", "English", "German", "French", "Spanish"],
+            options=list(LANGUAGE_CODES.keys()),
             index=0
         )
 
+    st.divider()
+
+    # ===== PARAMETRI AVANZATI =====
+    st.markdown("## 🎛️ Parametri Avanzati")
+
+    max_iterations = st.slider(
+        "🔄 Iterazioni ottimizzazione",
+        min_value=1,
+        max_value=MAX_ITERATIONS,
+        value=DEFAULT_ITERATIONS,
+        help="Numero di cicli di ottimizzazione"
+    )
+
+    max_serp_results = st.slider(
+        "📊 Risultati SERP",
+        min_value=5,
+        max_value=MAX_SERP_RESULTS,
+        value=DEFAULT_SERP_RESULTS,
+        help="Numero risultati organici da analizzare"
+    )
+
     max_sources = st.slider(
-        "📊 Max Sources",
+        "🌐 Fonti AIO da scrapare",
         min_value=3,
-        max_value=10,
+        max_value=MAX_SOURCES,
         value=5,
-        help="Numero massimo di fonti competitor da analizzare"
+        help="Numero massimo fonti AI Overview"
     )
 
     st.divider()
 
-    # ===== INFO COSTI =====
-    with st.expander("💰 Stima Costi"):
-        st.markdown(f"""
-        **Costo stimato per questa analisi:**
-        - DataForSEO: ~$0.10
-        - OpenAI (embeddings + chat): ~$0.05-0.10
+    # ===== VALIDAZIONE =====
+    credentials_valid = all([dataforseo_login, dataforseo_password, openai_key])
+    input_valid = bool(keyword)
 
-        **Totale**: ~$0.15-0.20
-
-        **Fonti analizzate**: {max_sources}
-        """)
+    if not credentials_valid:
+        st.warning("⚠️ Inserisci DataForSEO e OpenAI keys")
+    elif not input_valid:
+        st.info("📝 Inserisci la keyword da analizzare")
+    else:
+        st.success("✅ Pronto per l'analisi")
 
     st.divider()
 
@@ -235,314 +340,252 @@ with st.sidebar:
     analyze_button = st.button(
         "🚀 Avvia Analisi",
         use_container_width=True,
-        disabled=not (credentials_valid and target_url and keyword)
+        disabled=not (credentials_valid and input_valid) or st.session_state.running
     )
 
-# ==================== ISTRUZIONI INIZIALI ====================
-if not credentials_valid:
-    st.info("👈 **Per iniziare**: Inserisci le tue API keys nella sidebar")
+    # ===== LOG CONSOLE =====
+    st.divider()
+    st.markdown("## 📋 Console Log")
 
-    with st.expander("📖 Come ottenere le API Keys"):
-        st.markdown("""
-        ### 🔑 DataForSEO (Obbligatorio)
-        1. Registrati su [DataForSEO](https://dataforseo.com/)
-        2. Vai su Dashboard → API Access
-        3. Copia Login e Password
+    log_container = st.container()
+    with log_container:
+        st.markdown(
+            f'<div class="log-container">{render_logs() or "Nessun log..."}</div>',
+            unsafe_allow_html=True
+        )
 
-        ### 🔑 OpenAI (Obbligatorio)
-        1. Vai su [OpenAI Platform](https://platform.openai.com/)
-        2. Account → API Keys
-        3. Crea nuova key (sk-...)
+    if st.button("🗑️ Pulisci log", use_container_width=True):
+        st.session_state.logs = []
+        st.rerun()
 
-        ### 🔑 Jina AI (Opzionale)
-        Se vuoi usare Jina Reranker invece di OpenAI Embeddings:
-        1. Registrati su [Jina AI](https://jina.ai/)
-        2. Dashboard → API Keys
-        3. Crea nuova key (jina_...)
-        """)
+# ==================== MAIN CONTENT ====================
+col1, col2 = st.columns([1, 10])
+with col1:
+    st.image(MOCA_LOGO_URL, width=60)
+with col2:
+    st.title("🚀 AI Overview Content Optimizer v2.0")
+    st.markdown("**Ottimizza contenuti per Google AI Overview** | by [Moca Interactive](https://mocainteractive.com)")
 
-    st.stop()
-
-if not (target_url and keyword):
-    st.info("👈 **Inserisci URL e Keyword** nella sidebar per continuare")
-
-    # ========== LANDING PAGE ==========
-    st.markdown("""
-    ## 🚀 Come Funziona
-
-    Questo strumento analizza i tuoi contenuti e li ottimizza per aumentare le probabilità di comparire negli **AI Overview di Google**.
-
-    ### Workflow:
-
-    1. 🔍 **SERP Analysis** - Recupera AI Overview e competitor data
-    2. 🕷️ **Content Scraping** - Estrae contenuti dalle fonti top
-    3. 📊 **Relevance Scoring** - Calcola rilevanza contestuale con AI reranker
-    4. 🎯 **Gap Analysis** - Identifica entità e concetti mancanti
-    5. ✨ **Optimization** - Genera versione ottimizzata del contenuto
-    6. 💡 **Recommendations** - Fornisce suggerimenti actionable
-    """)
-
-    st.info("""
-    💡 **Tip**: Per risultati ottimali, scegli keyword informative che già mostrano AI Overview nelle SERP.
-    Esempio: "come fare...", "cosa significa...", "guida a..."
-    """)
-
-    st.stop()
+st.divider()
 
 # ==================== ANALISI ====================
 if analyze_button:
+    st.session_state.running = True
+    st.session_state.logs = []
+    st.session_state.results = None
+
+    add_log("Inizializzazione workflow...", level="info", agent="orchestrator")
+
+    # Crea stato iniziale
+    state = AgentState(
+        keyword=keyword,
+        target_url=target_url if target_url else None,
+        user_answer=user_answer if user_answer else None,
+        location=location,
+        language=language,
+        model_id=selected_model,
+        max_iterations=max_iterations,
+        max_serp_results=max_serp_results,
+        max_sources=max_sources,
+        openai_api_key=openai_key,
+        gemini_api_key=gemini_key if gemini_key else "",
+        dataforseo_login=dataforseo_login,
+        dataforseo_password=dataforseo_password
+    )
+
+    # Progress
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
     try:
-        # Initialize controller with user credentials
-        controller = OptimizationController(
-            dataforseo_login=dataforseo_login,
-            dataforseo_password=dataforseo_password,
-            openai_api_key=openai_key,
-            jina_api_key=jina_key if jina_key else None,
-            reranker_provider=reranker_provider
-        )
-
-        # Progress tracking
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        # Run analysis
         status_text.text("🔍 Analisi in corso...")
         progress_bar.progress(10)
 
-        results = controller.optimize_content(
-            target_url=target_url,
-            keyword=keyword,
-            location=location,
-            language=language,
-            max_sources=max_sources
-        )
+        # Esegui workflow
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result_state = loop.run_until_complete(run_optimization(state))
+        loop.close()
 
         progress_bar.progress(100)
         status_text.text("✅ Analisi completata!")
 
-        # Check for errors
-        if not results.get("success", False):
-            st.error(f"❌ Errore: {results.get('error', 'Errore sconosciuto')}")
-            st.stop()
-
-        # Store results in session state
-        st.session_state['results'] = results
+        st.session_state.results = result_state
+        st.session_state.running = False
 
     except Exception as e:
-        st.error(f"❌ Errore durante l'analisi: {str(e)}")
-        logger.error(f"Analisi fallita: {e}")
-        st.stop()
+        st.error(f"❌ Errore: {str(e)}")
+        add_log(f"Errore: {str(e)}", level="error", agent="system")
+        st.session_state.running = False
 
-# ==================== VISUALIZZAZIONE RISULTATI ====================
-if 'results' in st.session_state:
-    results = st.session_state['results']
+    st.rerun()
+
+# ==================== RISULTATI ====================
+if st.session_state.results:
+    state = st.session_state.results
 
     st.markdown("---")
     st.header("📊 RISULTATI ANALISI")
 
-    # ========== 1. OVERVIEW METRICS ==========
-    analysis = results.get("analysis", {})
-    target_content = results.get("target_content", {})
-
+    # ========== METRICHE OVERVIEW ==========
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric(
-            "Relevance Score Target",
-            f"{analysis.get('current_relevance_score', 0):.3f}"
-        )
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{state.best_score:.1%}</div>
+            <div class="metric-label">Score Finale</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col2:
-        is_source = "✅ Sì" if analysis.get("is_ai_overview_source") else "❌ No"
-        st.metric(
-            "In AI Overview",
-            is_source
-        )
+        initial_score = state.initial_ranking[0]["score"] if state.initial_ranking else 0
+        improvement = ((state.best_score - initial_score) / initial_score * 100) if initial_score > 0 else 0
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{improvement:+.1f}%</div>
+            <div class="metric-label">Miglioramento</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col3:
-        st.metric(
-            "Fonti AI Overview",
-            analysis.get("ai_overview_sources_count", 0)
-        )
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{len(state.iterations)}</div>
+            <div class="metric-label">Iterazioni</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with col4:
-        st.metric(
-            "Parole Target",
-            target_content.get("word_count", 0)
-        )
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="metric-value">{len(state.ai_overview_sources)}</div>
+            <div class="metric-label">Fonti AIO</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ========== 2. TARGET ANALYSIS ==========
-    st.markdown("---")
-    st.subheader("🎯 Analisi URL Target")
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.markdown("**Risposta Estratta**")
-        answer = target_content.get("answer", "N/A")
-        st.info(answer[:500] + "..." if len(answer) > 500 else answer)
-
-    with col2:
-        st.markdown("**Metriche**")
-        st.write(f"📝 Parole: **{target_content.get('word_count', 0)}**")
-        st.write(f"📄 Caratteri: **{target_content.get('char_count', 0)}**")
-
-    # ========== 2.5 AI OVERVIEW TEXT ==========
-    ai_overview_data = results.get("ai_overview", {})
-    ai_overview_text = ai_overview_data.get("text", "")
-
-    if ai_overview_text:
+    # ========== AI OVERVIEW ==========
+    if state.ai_overview_text:
         st.markdown("---")
         st.subheader("🤖 AI Overview di Google")
 
         col1, col2 = st.columns([3, 1])
         with col1:
-            st.success(ai_overview_text)
+            st.success(state.ai_overview_text)
         with col2:
-            st.metric("Caratteri", ai_overview_data.get("text_length", 0))
-            st.metric("Fonti citate", ai_overview_data.get("sources_count", 0))
-            # Similarità target vs AI Overview
-            target_vs_aio = analysis.get("target_vs_ai_overview_similarity", 0)
-            st.metric("Similarità Target", f"{target_vs_aio:.1%}")
+            st.metric("Caratteri", len(state.ai_overview_text))
+            st.metric("Fonti", len(state.ai_overview_sources))
 
-    # ========== 3. TOP SOURCES ==========
-    st.markdown("---")
-    st.subheader("🏆 Fonti citate nell'AI Overview")
-
-    top_sources = results.get("top_sources", [])
-
-    if top_sources:
-        sources_df = pd.DataFrame([
-            {
-                "Domain": s.get("domain", "N/A"),
-                "Relevance Score": f"{s.get('relevance_score', 0):.3f}",
-                "Semantic Similarity": f"{s.get('semantic_similarity', 0):.3f}",
-            }
-            for s in top_sources[:5]
-        ])
-
-        st.dataframe(sources_df, use_container_width=True)
-
-        with st.expander("📄 Visualizza risposte competitor"):
-            for i, source in enumerate(top_sources[:3]):
-                st.markdown(f"**{i+1}. {source.get('domain', 'N/A')}** (Score: {source.get('relevance_score', 0):.3f})")
-                st.caption(source.get("answer_preview", "N/A"))
-                st.markdown("---")
-    else:
-        st.warning("Nessuna fonte competitor trovata")
-
-    # ========== 4. GAP ANALYSIS ==========
-    st.markdown("---")
-    st.subheader("🔍 Gap Analysis - Entità Mancanti")
-
-    gap_analysis = results.get("gap_analysis", {})
-    missing_entities = gap_analysis.get("missing_entities", [])
-
-    col1, col2 = st.columns([1, 1])
-
-    with col1:
-        st.metric(
-            "Entity Coverage",
-            f"{gap_analysis.get('entity_coverage', 0):.1%}"
-        )
-
-    with col2:
-        st.metric(
-            "Similarity Media",
-            f"{gap_analysis.get('semantic_similarity_avg', 0):.3f}"
-        )
-
-    if missing_entities:
-        st.markdown("**🏷️ Entità da Aggiungere**")
-        tags_html = " ".join([
-            f'<span class="entity-tag">{ent.get("entity", "N/A")} ({ent.get("frequency", 0)}x)</span>'
-            for ent in missing_entities[:10]
-        ])
-        st.markdown(tags_html, unsafe_allow_html=True)
-    else:
-        st.success("✅ Nessuna entità significativa mancante!")
-
-    # ========== 5. OPTIMIZATION ==========
-    st.markdown("---")
-    st.subheader("✨ Risposta Ottimizzata")
-
-    optimization = results.get("optimized_answer", {})
-
-    if optimization:
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "Score Precedente",
-                f"{analysis.get('current_relevance_score', 0):.3f}"
-            )
-
-        with col2:
-            st.metric(
-                "Score Ottimizzato",
-                f"{optimization.get('new_relevance_score', 0):.3f}"
-            )
-
-        with col3:
-            improvement = optimization.get('improvement_percentage', 0)
-            st.metric(
-                "Miglioramento",
-                f"{improvement:+.1f}%"
-            )
-
-        st.markdown("**📝 Versione Ottimizzata**")
-        st.success(optimization.get("text", "N/A"))
-
-        with st.expander("🔄 Confronto Versioni"):
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("**Versione Originale**")
-                answer = target_content.get("answer", "N/A")
-                st.info(answer[:500] + "..." if len(answer) > 500 else answer)
-
-            with col2:
-                st.markdown("**Versione Ottimizzata**")
-                st.success(optimization.get("text", "N/A"))
-    else:
-        st.warning("⚠️ Impossibile generare ottimizzazione")
-
-    # ========== 6. FAN-OUT OPPORTUNITIES ==========
-    fan_out = results.get("fan_out_opportunities", [])
-    if fan_out:
+    # ========== RANKING INIZIALE ==========
+    if state.initial_ranking:
         st.markdown("---")
-        st.subheader("🔗 Opportunità Fan-Out Queries")
+        st.subheader("📊 Ranking Iniziale")
 
-        fan_out_df = pd.DataFrame([
+        ranking_df = pd.DataFrame([
             {
-                "Query": f.get("query", "N/A"),
-                "Opportunità": f.get("opportunity_score", "N/A")
+                "Rank": r["rank"],
+                "Tipo": r["type"],
+                "Fonte": r["label"],
+                "Score": f"{r['score']:.4f}"
             }
-            for f in fan_out[:5]
+            for r in state.initial_ranking[:10]
         ])
+        st.dataframe(ranking_df, use_container_width=True, hide_index=True)
 
-        st.dataframe(fan_out_df, use_container_width=True)
+    # ========== ITERAZIONI ==========
+    if state.iterations:
+        st.markdown("---")
+        st.subheader("🔄 Cicli di Ottimizzazione")
 
-    # ========== 7. RECOMMENDATIONS ==========
+        for iteration in state.iterations:
+            with st.expander(f"📝 Iterazione {iteration['iteration']} - Score: {iteration['score']:.4f} ({iteration['improvement']:+.2f}%)"):
+                col1, col2 = st.columns([2, 1])
+
+                with col1:
+                    st.markdown("**Ragionamento:**")
+                    st.info(iteration["reasoning"][:500] + "..." if len(iteration["reasoning"]) > 500 else iteration["reasoning"])
+
+                    st.markdown("**Risposta Ottimizzata:**")
+                    st.success(iteration["answer"])
+
+                with col2:
+                    st.markdown("**Ranking Iterazione:**")
+                    if iteration.get("ranking"):
+                        for r in iteration["ranking"][:5]:
+                            st.write(f"#{r['rank']} {r['label']}: {r['score']:.4f}")
+
+    # ========== RISPOSTA FINALE ==========
+    if state.best_answer:
+        st.markdown("---")
+        st.subheader("✨ Risposta Ottimizzata Finale")
+
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.success(state.best_answer)
+        with col2:
+            st.metric("Score Finale", f"{state.best_score:.4f}")
+            st.metric("Parole", len(state.best_answer.split()))
+
+    # ========== RANKING FINALE ==========
+    if state.current_ranking:
+        st.markdown("---")
+        st.subheader("🏆 Ranking Finale")
+
+        final_ranking_df = pd.DataFrame([
+            {
+                "Rank": r["rank"],
+                "Tipo": r["type"],
+                "Fonte": r["label"],
+                "Score": f"{r['score']:.4f}"
+            }
+            for r in state.current_ranking[:10]
+        ])
+        st.dataframe(final_ranking_df, use_container_width=True, hide_index=True)
+
+    # ========== ANALISI STRATEGICA ==========
+    if state.strategic_analysis:
+        st.markdown("---")
+        st.subheader("📋 Analisi Strategica")
+
+        with st.expander("Visualizza Analisi Completa"):
+            st.markdown("**Ragionamento:**")
+            st.info(state.strategic_analysis.get("reasoning", ""))
+            st.markdown("**Analisi:**")
+            st.write(state.strategic_analysis.get("analysis", ""))
+
+    # ========== PIANO CONTENUTO ==========
+    if state.content_plan:
+        st.markdown("---")
+        st.subheader("📝 Piano Contenuto")
+
+        with st.expander("Visualizza Piano Completo"):
+            st.markdown("**Ragionamento:**")
+            st.info(state.content_plan.get("reasoning", ""))
+            st.markdown("**Piano:**")
+            st.write(state.content_plan.get("plan", ""))
+
+    # ========== EXPORT ==========
     st.markdown("---")
-    st.subheader("💡 Raccomandazioni")
+    st.subheader("📥 Export")
 
-    recommendations = results.get("recommendations", [])
-
-    if recommendations:
-        for rec in recommendations:
-            st.markdown(f"- {rec}")
-    else:
-        st.success("✅ Il contenuto è già ben ottimizzato!")
-
-    # ========== 8. EXPORT DATA ==========
-    st.markdown("---")
-    st.subheader("📥 Export Dati")
-
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        json_str = json.dumps(results, indent=2, ensure_ascii=False, default=str)
+        # JSON Export
+        export_data = {
+            "keyword": state.keyword,
+            "best_answer": state.best_answer,
+            "best_score": state.best_score,
+            "iterations": state.iterations,
+            "initial_ranking": state.initial_ranking,
+            "final_ranking": state.current_ranking,
+            "ai_overview_text": state.ai_overview_text,
+            "strategic_analysis": state.strategic_analysis,
+            "content_plan": state.content_plan,
+            "generated_at": datetime.now().isoformat()
+        }
+
+        json_str = json.dumps(export_data, indent=2, ensure_ascii=False, default=str)
         st.download_button(
             label="📄 Download JSON",
             data=json_str,
@@ -551,24 +594,82 @@ if 'results' in st.session_state:
         )
 
     with col2:
+        # CSV Summary
         summary_data = {
-            "URL Target": [target_url],
-            "Keyword": [keyword],
-            "Relevance Score": [analysis.get('current_relevance_score', 0)],
-            "Optimized Score": [optimization.get('new_relevance_score', 0) if optimization else 0],
-            "Improvement %": [optimization.get('improvement_percentage', 0) if optimization else 0],
-            "Missing Entities": [len(missing_entities)],
+            "Keyword": [state.keyword],
+            "Best Score": [state.best_score],
+            "Iterations": [len(state.iterations)],
+            "AIO Sources": [len(state.ai_overview_sources)],
             "Timestamp": [datetime.now().isoformat()]
         }
         summary_df = pd.DataFrame(summary_data)
-
         csv = summary_df.to_csv(index=False)
         st.download_button(
-            label="📊 Download CSV Summary",
+            label="📊 Download CSV",
             data=csv,
             file_name=f"summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
+
+    with col3:
+        # PDF Export
+        try:
+            from fpdf import FPDF
+
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", "B", 16)
+            pdf.cell(0, 10, "AI Overview Optimization Report", ln=True, align="C")
+            pdf.set_font("Arial", "", 12)
+            pdf.cell(0, 10, f"Keyword: {state.keyword}", ln=True)
+            pdf.cell(0, 10, f"Score Finale: {state.best_score:.4f}", ln=True)
+            pdf.cell(0, 10, f"Iterazioni: {len(state.iterations)}", ln=True)
+            pdf.ln(10)
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 10, "Risposta Ottimizzata:", ln=True)
+            pdf.set_font("Arial", "", 10)
+            pdf.multi_cell(0, 5, state.best_answer[:1000] if state.best_answer else "N/A")
+
+            pdf_output = pdf.output(dest='S').encode('latin-1')
+
+            st.download_button(
+                label="📑 Download PDF",
+                data=pdf_output,
+                file_name=f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+        except Exception as e:
+            st.warning("PDF export non disponibile")
+
+# ==================== ISTRUZIONI INIZIALI ====================
+if not st.session_state.results and not st.session_state.running:
+    st.info("👈 **Per iniziare**: Configura le API keys e inserisci la keyword nella sidebar")
+
+    st.markdown("""
+    ## 🚀 Come Funziona
+
+    Questo strumento usa un **sistema multi-agente** per ottimizzare i tuoi contenuti per Google AI Overview.
+
+    ### Workflow:
+
+    1. 🔍 **SERP Analysis** - Recupera AI Overview e dati SERP
+    2. 🕷️ **Content Scraping** - Estrae contenuti dalle fonti top
+    3. 📊 **Ranking Iniziale** - Calcola posizionamento iniziale
+    4. 🔄 **Ciclo Ottimizzazione** - Migliora iterativamente con reasoning
+    5. 📋 **Analisi Strategica** - Intento, competitor, opportunità
+    6. 📝 **Piano Contenuto** - Struttura articolo H1/H2/H3
+
+    ### Modelli Supportati:
+    - **OpenAI**: GPT-4o, GPT-4o Mini, GPT-4 Turbo, o1-preview, o1-mini
+    - **Gemini**: 1.5 Pro, 1.5 Flash, 2.0 Flash
+
+    ### Caratteristiche:
+    - ✅ Ottimizzazione iterativa con ragionamento
+    - ✅ Ranking comparativo ad ogni iterazione
+    - ✅ Analisi strategica competitor
+    - ✅ Piano contenuto strutturato
+    - ✅ Export JSON/CSV/PDF
+    """)
 
 # ==================== FOOTER ====================
 st.divider()
@@ -576,5 +677,6 @@ st.markdown(f"""
 <div style='text-align: center; color: {MOCA_COLORS['gray']}; padding: 20px;'>
     <p>Sviluppato da <a href='https://mocainteractive.com' target='_blank' style='color: {MOCA_COLORS['primary']}; text-decoration: none;'><strong>Moca Interactive</strong></a></p>
     <p style='font-size: 0.9em;'>© 2025 Moca Interactive. Tutti i diritti riservati.</p>
+    <p style='font-size: 0.8em;'>v2.0 - Multi-Agent System</p>
 </div>
 """, unsafe_allow_html=True)
