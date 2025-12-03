@@ -1,7 +1,8 @@
 """
 Optimization Controller - Orchestratore workflow completo
 """
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any, Optional, List
 from models.dataforseo_client import DataForSEOClient
 from models.scraper import ContentScraper
 from models.reranker_client import RerankerClient
@@ -73,324 +74,258 @@ class OptimizationController:
         Returns:
             Dict con risultati analisi completa
         """
-        # ... resto del codice rimane uguale
-        logger.info(f"\n{'='*80}")
-        logger.info(f"🎯 INIZIO OTTIMIZZAZIONE")
-        logger.info(f"URL: {target_url}")
-        logger.info(f"Keyword: {keyword}")
-        logger.info(f"{'='*80}\n")
-        
-        results = {
-            "metadata": {
-                "target_url": target_url,
-                "keyword": keyword,
-                "location": location,
-                "language": language,
-                "timestamp": datetime.now().isoformat(),
-            },
-            "serp_data": None,
-            "target_analysis": None,
-            "sources_analysis": None,
-            "gap_analysis": None,
-            "optimization": None,
-            "fan_out_analysis": None,
-            "recommendations": []
-        }
-        
         try:
-            # STEP 1: Recupera SERP e AI Overview
-            logger.info("📋 STEP 1: Recupero SERP e AI Overview")
+            # Converti location e language in codes
+            location_code = LOCATION_CODES.get(location, 2380)
+            language_code = LANGUAGE_CODES.get(language, "it")
+            
+            logger.info(f"Inizio ottimizzazione per: {keyword}")
+            logger.info(f"Target URL: {target_url}")
+            logger.info(f"Location: {location} ({location_code})")
+            logger.info(f"Language: {language} ({language_code})")
+            
+            # === STEP 1: Recupera SERP e AI Overview ===
+            logger.info("STEP 1/7: Recupero AI Overview...")
             serp_data = self.dataforseo.get_serp_with_ai_overview(
                 keyword=keyword,
-                location=location,
-                language=language
+                location_code=location_code,
+                language_code=language_code
             )
-            results["serp_data"] = serp_data
             
-            if not serp_data["has_ai_overview"]:
-                logger.warning("⚠️ Nessun AI Overview trovato per questa keyword")
-                results["recommendations"].append(
-                    "❌ Questa keyword non ha AI Overview attivo - potrebbe non essere una query informativa"
-                )
-                # Continua comunque con analisi organica
+            if not serp_data or "ai_overview" not in serp_data:
+                logger.warning("AI Overview non trovato per questa keyword")
+                return {
+                    "success": False,
+                    "error": "AI Overview non disponibile per questa keyword"
+                }
             
-            # STEP 2: Scrape target URL
-            logger.info("\n📋 STEP 2: Scraping URL target")
-            target_content = await self.scraper.scrape_url(target_url, keyword)
+            ai_overview = serp_data["ai_overview"]
+            logger.success(f"AI Overview trovato con {len(ai_overview.get('sources', []))} fonti")
             
-            # Estrai risposta dal contenuto target
-            target_answer = target_content.get("answer_text") or \
-                           self.scraper.extract_answer_from_content(
-                               target_content.get("content", ""),
-                               keyword,
-                               max_words=300
-                           )
+            # === STEP 2: Scrape target URL ===
+            logger.info("STEP 2/7: Scraping target URL...")
+            target_answer = self.scraper.extract_answer(target_url, keyword)
             
-            results["target_analysis"] = {
-                "url": target_url,
-                "domain": extract_domain(target_url),
-                "answer": target_answer,
-                "content_length": len(target_content.get("content", "")),
-                "quality_metrics": self.analyzer.analyze_content_quality(target_answer)
-            }
+            if not target_answer:
+                logger.error("Impossibile estrarre contenuto da target URL")
+                return {
+                    "success": False,
+                    "error": "Impossibile estrarre contenuto dalla pagina target"
+                }
             
-            logger.info(f"✓ Target scrapato: {len(target_answer)} caratteri risposta")
+            logger.success(f"Target content estratto: {len(target_answer.split())} parole")
             
-            # STEP 3: Scrape AI Overview sources
-            logger.info("\n📋 STEP 3: Scraping fonti AI Overview")
+            # === STEP 3: Scrape fonti AI Overview ===
+            logger.info("STEP 3/7: Scraping fonti competitor...")
             
-            sources_to_scrape = []
-            if serp_data["has_ai_overview"]:
-                # Usa fonti AI Overview
-                sources_to_scrape = [
-                    src["url"] for src in serp_data["ai_overview_sources"][:max_sources]
-                ]
+            sources_urls = [
+                source["url"] for source in ai_overview.get("sources", [])[:max_sources]
+            ]
+            
+            if not sources_urls:
+                logger.warning("Nessuna fonte trovata in AI Overview")
+                sources_answers = []
             else:
-                # Fallback: usa top risultati organici
-                sources_to_scrape = [
-                    res["url"] for res in serp_data["organic_results"][:max_sources]
-                ]
+                # Usa asyncio per scraping parallelo
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                sources_answers = loop.run_until_complete(
+                    self.scraper.scrape_multiple_async(sources_urls, keyword)
+                )
+                loop.close()
             
-            logger.info(f"Scraping {len(sources_to_scrape)} fonti")
+            logger.success(f"{len(sources_answers)} fonti scraped con successo")
             
-            sources_contents = await self.scraper.scrape_multiple_urls(
-                sources_to_scrape,
-                extract_answer_for_query=keyword
-            )
+            # === STEP 4: Calcola relevance scores ===
+            logger.info("STEP 4/7: Calcolo relevance scores...")
             
-            # Estrai risposte dalle fonti
-            sources_data = []
-            for i, content in enumerate(sources_contents):
-                answer = content.get("answer_text") or \
-                        self.scraper.extract_answer_from_content(
-                            content.get("content", ""),
-                            keyword,
-                            max_words=300
-                        )
-                
-                if answer and len(answer) > 50:  # Filtra risposte troppo corte
-                    sources_data.append({
-                        "url": content["url"],
-                        "domain": extract_domain(content["url"]),
-                        "answer": answer,
-                        "position": i + 1
-                    })
+            # Prepara items per reranking
+            all_answers = [{"text": target_answer, "url": target_url, "is_target": True}]
             
-            logger.info(f"✓ Estratte {len(sources_data)} risposte valide")
+            for source in sources_answers:
+                all_answers.append({
+                    "text": source["answer"],
+                    "url": source["url"],
+                    "is_target": False
+                })
             
-            # STEP 4: Calcola rilevanza con Reranker
-            logger.info("\n📋 STEP 4: Calcolo rilevanza contestuale")
-            
-            all_answers = [target_answer] + [src["answer"] for src in sources_data]
-            
-            reranked = self.reranker.rerank(
+            # Rerank
+            ranked_answers = self.reranker.rerank(
                 query=keyword,
-                documents=all_answers,
-                return_documents=False
+                items=all_answers
             )
             
-            # Assegna score
-            target_relevance_score = reranked[0]["relevance_score"]
-            results["target_analysis"]["relevance_score"] = target_relevance_score
+            # Separa target da sources
+            target_result = next((r for r in ranked_answers if r.get("is_target")), None)
+            top_sources = [r for r in ranked_answers if not r.get("is_target")][:5]
             
-            for i, result in enumerate(reranked[1:]):
-                sources_data[i]["relevance_score"] = result["relevance_score"]
+            if not target_result:
+                logger.error("Target non trovato nei risultati reranking")
+                return {"success": False, "error": "Errore nel calcolo relevance score"}
             
-            # Ordina sources per score
-            sources_data.sort(key=lambda x: x["relevance_score"], reverse=True)
-            results["sources_analysis"] = sources_data
+            target_score = target_result["relevance_score"]
+            logger.success(f"Target relevance score: {target_score:.3f}")
             
-            logger.info(f"✓ Target relevance score: {target_relevance_score:.3f}")
-            logger.info(f"✓ Best competitor score: {sources_data[0]['relevance_score']:.3f}")
+            # === STEP 5: Calcola similarità semantica ===
+            logger.info("STEP 5/7: Calcolo similarità semantica...")
             
-            # STEP 5: Calcola similarità semantica
-            logger.info("\n📋 STEP 5: Analisi similarità semantica")
+            # Genera embeddings
+            all_texts = [target_answer] + [s["text"] for s in top_sources]
+            embeddings = self.embeddings.generate_embeddings_batch(all_texts)
             
-            similarities = self.embeddings.calculate_similarities(
-                target_answer,
-                [src["answer"] for src in sources_data]
-            )
+            # Calcola similarità target vs sources
+            target_emb = embeddings[0]
+            sources_emb = embeddings[1:]
             
-            # Aggiungi similarità ai sources
-            for i, sim in enumerate(similarities):
-                sources_data[i]["semantic_similarity"] = sim["similarity"]
+            similarities = []
+            for src_emb in sources_emb:
+                sim = self.embeddings.cosine_similarity(target_emb, src_emb)
+                similarities.append(sim)
             
-            avg_similarity = sum(s["similarity"] for s in similarities) / len(similarities)
-            logger.info(f"✓ Similarità semantica media: {avg_similarity:.3f}")
+            avg_similarity = sum(similarities) / len(similarities) if similarities else 0
             
-            # STEP 6: Analisi gap entità
-            logger.info("\n📋 STEP 6: Analisi gap entità")
+            logger.success(f"Similarità semantica media: {avg_similarity:.3f}")
+            
+            # === STEP 6: Analisi entità ===
+            logger.info("STEP 6/7: Analisi gap entità...")
             
             gap_analysis = self.analyzer.analyze_entity_gap(
-                target_answer,
-                [src["answer"] for src in sources_data[:3]],  # Top 3
-                top_n=10
+                target_text=target_answer,
+                competitor_texts=[s["text"] for s in top_sources[:3]]
             )
             
-            results["gap_analysis"] = gap_analysis
-            logger.info(f"✓ Trovate {len(gap_analysis['missing_entities'])} entità mancanti")
+            missing_entities = gap_analysis["missing_entities"]
+            entity_coverage = gap_analysis["coverage"]
             
-            # STEP 7: Genera ottimizzazione
-            logger.info("\n📋 STEP 7: Generazione risposta ottimizzata")
+            logger.success(f"Entity gap: {len(missing_entities)} entità mancanti")
+            logger.info(f"Entity coverage: {entity_coverage:.2%}")
             
-            optimized_answer = self.analyzer.generate_optimized_answer(
+            # === STEP 7: Ottimizzazione LLM ===
+            logger.info("STEP 7/7: Generazione versione ottimizzata...")
+            
+            optimized_result = self.analyzer.optimize_answer(
                 query=keyword,
                 current_answer=target_answer,
-                top_sources=sources_data[:3],
-                missing_entities=gap_analysis["missing_entities"],
-                max_words=300
+                top_sources=[s["text"] for s in top_sources[:3]],
+                missing_entities=missing_entities
             )
             
-            if optimized_answer:
-                # Re-calcola score per versione ottimizzata
-                optimized_score_result = self.reranker.rerank(
-                    query=keyword,
-                    documents=[optimized_answer] + [src["answer"] for src in sources_data],
-                    return_documents=False
-                )
-                
-                optimized_score = optimized_score_result[0]["relevance_score"]
-                improvement = calculate_improvement_percentage(
-                    target_relevance_score,
-                    optimized_score
-                )
-                
-                results["optimization"] = {
-                    "optimized_answer": optimized_answer,
-                    "new_relevance_score": optimized_score,
-                    "previous_score": target_relevance_score,
-                    "improvement_percentage": improvement,
+            optimized_answer = optimized_result["optimized_answer"]
+            
+            # Calcola nuovo score per versione ottimizzata
+            optimized_items = [
+                {"text": optimized_answer, "is_optimized": True},
+                *[{"text": s["text"], "is_optimized": False} for s in top_sources]
+            ]
+            
+            optimized_ranked = self.reranker.rerank(keyword, optimized_items)
+            optimized_score = next(
+                (r["relevance_score"] for r in optimized_ranked if r.get("is_optimized")),
+                target_score
+            )
+            
+            improvement = ((optimized_score - target_score) / target_score * 100) if target_score > 0 else 0
+            
+            logger.success(f"Ottimizzazione completata: +{improvement:.1f}%")
+            
+            # === STEP 8: Fan-out queries ===
+            fan_out_queries = ai_overview.get("fan_out_queries", [])
+            
+            # === RISULTATI FINALI ===
+            result = {
+                "success": True,
+                "analysis": {
+                    "target_url": target_url,
+                    "keyword": keyword,
+                    "location": location,
+                    "language": language,
+                    "current_relevance_score": float(target_score),
+                    "is_ai_overview_source": target_url in [s.get("url", "") for s in ai_overview.get("sources", [])],
+                    "ai_overview_sources_count": len(ai_overview.get("sources", []))
+                },
+                "target_content": {
+                    "answer": target_answer,
+                    "word_count": len(target_answer.split()),
+                    "char_count": len(target_answer)
+                },
+                "top_sources": [
+                    {
+                        "url": s["url"],
+                        "domain": s["url"].split("/")[2] if "/" in s["url"] else s["url"],
+                        "relevance_score": float(s["relevance_score"]),
+                        "semantic_similarity": float(similarities[i]) if i < len(similarities) else 0,
+                        "answer_preview": s["text"][:200] + "..."
+                    }
+                    for i, s in enumerate(top_sources)
+                ],
+                "gap_analysis": {
+                    "missing_entities": [
+                        {"entity": ent, "frequency": freq}
+                        for ent, freq in missing_entities
+                    ],
+                    "entity_coverage": float(entity_coverage),
+                    "semantic_similarity_avg": float(avg_similarity),
+                    "relevance_gap": float(max(s["relevance_score"] for s in top_sources) - target_score) if top_sources else 0
+                },
+                "optimized_answer": {
+                    "text": optimized_answer,
+                    "new_relevance_score": float(optimized_score),
+                    "improvement_percentage": float(improvement),
                     "word_count": len(optimized_answer.split()),
-                    "quality_metrics": self.analyzer.analyze_content_quality(optimized_answer)
-                }
-                
-                logger.info(f"✓ Score ottimizzato: {optimized_score:.3f} ({improvement:+.1f}%)")
-            else:
-                results["optimization"] = None
-                logger.warning("⚠️ Impossibile generare ottimizzazione")
+                    "char_count": len(optimized_answer)
+                },
+                "fan_out_opportunities": [
+                    {
+                        "query": query,
+                        "opportunity_score": "HIGH" if query.lower() not in target_answer.lower() else "LOW"
+                    }
+                    for query in fan_out_queries[:5]
+                ],
+                "recommendations": self._generate_recommendations(
+                    target_score=target_score,
+                    optimized_score=optimized_score,
+                    missing_entities=missing_entities,
+                    fan_out_queries=fan_out_queries
+                )
+            }
             
-            # STEP 8: Analisi fan-out queries (opzionale)
-            if include_fan_out and serp_data["has_ai_overview"]:
-                logger.info("\n📋 STEP 8: Analisi fan-out queries")
-                
-                fan_out_queries = serp_data["ai_overview"].get("fan_out_queries", [])
-                
-                if fan_out_queries:
-                    fan_out_analysis = await self._analyze_fan_out_queries(
-                        target_url,
-                        fan_out_queries[:5]  # Max 5 per non esagerare
-                    )
-                    results["fan_out_analysis"] = fan_out_analysis
-                    logger.info(f"✓ Analizzate {len(fan_out_analysis)} fan-out queries")
-            
-            # STEP 9: Genera raccomandazioni
-            logger.info("\n📋 STEP 9: Generazione raccomandazioni")
-            recommendations = self._generate_recommendations(results)
-            results["recommendations"] = recommendations
-            
-            logger.info(f"\n{'='*80}")
-            logger.info(f"✅ OTTIMIZZAZIONE COMPLETATA")
-            logger.info(f"{'='*80}\n")
-            
-            return results
+            logger.success("Analisi completata con successo!")
+            return result
             
         except Exception as e:
-            logger.error(f"✗ Errore durante ottimizzazione: {str(e)}")
-            raise
+            logger.error(f"Errore durante ottimizzazione: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
     
-    async def _analyze_fan_out_queries(
+    def _generate_recommendations(
         self,
-        target_url: str,
-        queries: List[str]
-    ) -> List[Dict[str, Any]]:
-        """Analizza se target URL è presente nelle fan-out queries"""
-        
-        results = []
-        
-        for query in queries:
-            try:
-                # Recupera SERP per query correlata (senza AI Overview per velocità)
-                serp = self.dataforseo.get_serp_with_ai_overview(
-                    keyword=query,
-                    location="Italy",
-                    language="Italian"
-                )
-                
-                # Check se target URL è nei risultati
-                is_ranking = any(
-                    target_url in result["url"]
-                    for result in serp["organic_results"]
-                )
-                
-                # Trova posizione se presente
-                position = None
-                if is_ranking:
-                    for result in serp["organic_results"]:
-                        if target_url in result["url"]:
-                            position = result["position"]
-                            break
-                
-                results.append({
-                    "query": query,
-                    "is_ranking": is_ranking,
-                    "position": position,
-                    "opportunity": not is_ranking,
-                    "total_results": serp["total_results"]
-                })
-                
-            except Exception as e:
-                logger.warning(f"Errore analisi fan-out '{query}': {str(e)}")
-        
-        return results
-    
-    def _generate_recommendations(self, results: Dict[str, Any]) -> List[str]:
-        """Genera raccomandazioni basate sull'analisi"""
-        
+        target_score: float,
+        optimized_score: float,
+        missing_entities: List[tuple],
+        fan_out_queries: List[str]
+    ) -> List[str]:
+        """Genera raccomandazioni actionable"""
         recommendations = []
         
-        # Raccomandazioni based on relevance score
-        target_score = results["target_analysis"].get("relevance_score", 0)
-        best_competitor_score = results["sources_analysis"][0]["relevance_score"] if results["sources_analysis"] else 0
+        # Score-based
+        if target_score < 0.5:
+            recommendations.append("⚠️ Score molto basso: considera riscrittura completa del contenuto")
+        elif target_score < 0.7:
+            recommendations.append("📝 Integra le entità mancanti e aggiungi più dettagli")
         
-        if target_score < 0.7:
-            recommendations.append(
-                f"⚠️ Relevance score basso ({target_score:.2f}) - la risposta non è ottimizzata per la query"
-            )
+        # Entities
+        if len(missing_entities) > 5:
+            top_entities = [ent for ent, _ in missing_entities[:5]]
+            recommendations.append(f"🏷️ Aggiungi queste entità chiave: {', '.join(top_entities)}")
         
-        if target_score < best_competitor_score:
-            gap = (best_competitor_score - target_score) / best_competitor_score * 100
-            recommendations.append(
-                f"📊 Gap di rilevanza: {gap:.1f}% rispetto al miglior competitor"
-            )
+        # Improvement
+        if optimized_score > target_score:
+            recommendations.append(f"✅ Usa la versione ottimizzata (+{((optimized_score - target_score) / target_score * 100):.1f}%)")
         
-        # Raccomandazioni based on entities
-        gap_analysis = results.get("gap_analysis", {})
-        missing_entities = gap_analysis.get("missing_entities", [])
-        
-        if missing_entities:
-            top_missing = ", ".join([ent["entity"] for ent in missing_entities[:5]])
-            recommendations.append(
-                f"🏷️ Aggiungi entità chiave: {top_missing}"
-            )
-        
-        # Raccomandazioni based on fan-out
-        fan_out = results.get("fan_out_analysis", [])
-        opportunities = [f for f in fan_out if f.get("opportunity")]
-        
-        if opportunities:
-            recommendations.append(
-                f"💡 {len(opportunities)} opportunità fan-out query non coperte"
-            )
-            for opp in opportunities[:3]:
-                recommendations.append(
-                    f"  → Crea sezione per: '{opp['query']}'"
-                )
-        
-        # Raccomandazioni based on optimization
-        optimization = results.get("optimization")
-        if optimization and optimization.get("improvement_percentage", 0) > 10:
-            recommendations.append(
-                f"✅ Usa la versione ottimizzata (+{optimization['improvement_percentage']:.1f}% rilevanza)"
-            )
+        # Fan-out
+        if len(fan_out_queries) > 0:
+            recommendations.append(f"❓ Crea sezioni FAQ per le {len(fan_out_queries)} query correlate")
         
         return recommendations
