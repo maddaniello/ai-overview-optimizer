@@ -6,8 +6,7 @@ from .rate_limiter import RateLimiter
 from .helpers import (
     clean_text,
     extract_domain,
-    calculate_improvement,
-    format_score,
+    calculate_improvement_percentage
 )
 
 __all__ = [
@@ -15,6 +14,5 @@ __all__ = [
     "RateLimiter",
     "clean_text",
     "extract_domain",
-    "calculate_improvement",
-    "format_score",
+    "calculate_improvement_percentage"
 ]
