@@ -1,179 +1,324 @@
 """
-AI Overview Content Optimizer
-Streamlit UI con branding Moca Interactive
+AI Overview Content Optimizer - Streamlit Interface
+Developed by Moca Interactive
 """
 import streamlit as st
-import asyncio
-from datetime import datetime
-import pandas as pd
+from pathlib import Path
+import sys
+
+# Add project root to path
+sys.path.insert(0, str(Path(__file__).parent))
 
 from controllers.optimization_controller import OptimizationController
-from config import moca_branding, LOCATION_CODES, LANGUAGE_CODES
-from utils.logger import get_logger
+from utils.logger import logger
+import json
 
-logger = get_logger(__name__)
-
-# ========== STREAMLIT CONFIG ==========
+# ==================== PAGE CONFIG ====================
 st.set_page_config(
-    page_title="AI Overview Content Optimizer | Moca Interactive",
+    page_title="AI Overview Content Optimizer | Moca",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ========== CUSTOM CSS MOCA BRANDING ==========
-st.markdown(f"""
+# ==================== CUSTOM CSS ====================
+st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Figtree:wght@400;600;700&display=swap');
     
-    * {{
-        font-family: '{moca_branding.font_family}', sans-serif;
-    }}
+    html, body, [class*="css"] {
+        font-family: 'Figtree', sans-serif;
+    }
     
-    .main {{
-        background-color: {moca_branding.light_color};
-    }}
+    .main {
+        background-color: #FFFFFF;
+    }
     
-    .stButton > button {{
-        background-color: {moca_branding.primary_color};
+    h1, h2, h3 {
+        color: #E52217 !important;
+        font-weight: 700;
+    }
+    
+    .stButton>button {
+        background-color: #E52217;
         color: white;
         font-weight: 600;
         border-radius: 8px;
         border: none;
         padding: 0.5rem 2rem;
-        transition: all 0.3s;
-    }}
+    }
     
-    .stButton > button:hover {{
-        background-color: #cc1e14;
-        box-shadow: 0 4px 12px rgba(229, 34, 23, 0.3);
-    }}
+    .stButton>button:hover {
+        background-color: #c41d13;
+    }
     
-    h1, h2, h3 {{
-        color: {moca_branding.black};
-    }}
+    .stProgress > div > div {
+        background-color: #E52217;
+    }
     
-    .metric-card {{
-        background: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        border-left: 4px solid {moca_branding.primary_color};
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-        margin: 1rem 0;
-    }}
+    .sidebar .sidebar-content {
+        background-color: #FFE7E6;
+    }
     
-    .score-big {{
-        font-size: 3rem;
+    .css-1d391kg {
+        background-color: #FFE7E6;
+    }
+    
+    .stAlert {
+        border-left: 4px solid #E52217;
+    }
+    
+    /* Custom metric styling */
+    [data-testid="stMetricValue"] {
+        color: #E52217;
+        font-size: 2rem;
         font-weight: 700;
-        color: {moca_branding.primary_color};
-    }}
+    }
     
-    .improvement-positive {{
-        color: #00A86B;
-        font-weight: 700;
-    }}
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
     
-    .improvement-negative {{
-        color: {moca_branding.primary_color};
-        font-weight: 700;
-    }}
-    
-    .entity-tag {{
-        display: inline-block;
-        background: {moca_branding.gray};
-        color: white;
-        padding: 0.3rem 0.8rem;
-        border-radius: 16px;
-        margin: 0.2rem;
-        font-size: 0.85rem;
-    }}
-    
-    .recommendation {{
-        background: white;
-        border: 2px solid {moca_branding.primary_color};
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 0.5rem 0;
-    }}
-    
-    .step-header {{
-        background: linear-gradient(135deg, {moca_branding.primary_color} 0%, #ff4535 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
+    .stTabs [data-baseweb="tab"] {
+        background-color: #FFE7E6;
+        color: #191919;
         font-weight: 600;
-    }}
+        border-radius: 8px 8px 0 0;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background-color: #E52217;
+        color: white;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# ========== HEADER CON LOGO ==========
-col1, col2 = st.columns([1, 4])
+# ==================== HEADER ====================
+col1, col2 = st.columns([1, 10])
 with col1:
-    st.image(moca_branding.logo_url, width=100)
+    st.image(
+        "https://mocainteractive.com/wp-content/uploads/2025/04/cropped-moca-instagram-icona-1-192x192.png",
+        width=60
+    )
 with col2:
     st.title("🔍 AI Overview Content Optimizer")
-    st.markdown("*Ottimizza i tuoi contenuti per massimizzare la rilevanza negli AI Overview di Google*")
+    st.markdown("**Ottimizza contenuti per Google AI Overview** | by [Moca Interactive](https://mocainteractive.com)")
 
-st.markdown("---")
+st.divider()
 
-# ========== SIDEBAR ==========
+# ==================== SIDEBAR - CREDENZIALI ====================
 with st.sidebar:
-    st.header("⚙️ Configurazione")
+    st.image(
+        "https://mocainteractive.com/wp-content/uploads/2025/04/cropped-moca-instagram-icona-1-192x192.png",
+        width=80
+    )
+    st.markdown("## 🔐 Configurazione")
+    
+    # ===== SEZIONE API KEYS =====
+    with st.expander("🔑 API Keys", expanded=True):
+        st.markdown("### DataForSEO")
+        dataforseo_login = st.text_input(
+            "Login",
+            type="default",
+            help="Il tuo login DataForSEO",
+            key="dataforseo_login"
+        )
+        dataforseo_password = st.text_input(
+            "Password",
+            type="password",
+            help="La tua password DataForSEO",
+            key="dataforseo_password"
+        )
+        
+        st.markdown("---")
+        st.markdown("### OpenAI")
+        openai_key = st.text_input(
+            "API Key",
+            type="password",
+            help="Formato: sk-...",
+            key="openai_key"
+        )
+        
+        st.markdown("---")
+        st.markdown("### Jina AI (Reranker)")
+        jina_key = st.text_input(
+            "API Key",
+            type="password",
+            help="Formato: jina_...",
+            key="jina_key"
+        )
+    
+    # ===== VALIDAZIONE CREDENZIALI =====
+    credentials_valid = all([
+        dataforseo_login,
+        dataforseo_password,
+        openai_key,
+        jina_key
+    ])
+    
+    if not credentials_valid:
+        st.warning("⚠️ Inserisci tutte le API keys per continuare")
+    else:
+        st.success("✅ Credenziali configurate")
+    
+    st.divider()
+    
+    # ===== PARAMETRI ANALISI =====
+    st.markdown("## ⚙️ Parametri Analisi")
     
     target_url = st.text_input(
         "🔗 URL Target",
-        placeholder="https://example.com/your-article",
+        placeholder="https://example.com/article",
         help="URL della pagina da ottimizzare"
     )
     
     keyword = st.text_input(
-        "🔑 Keyword Target",
+        "🔍 Keyword",
         placeholder="come rinnovare il passaporto",
-        help="Keyword per cui vuoi ottimizzare"
+        help="Keyword principale da analizzare"
     )
     
-    col1, col2 = st.columns(2)
-    with col1:
+    col_loc, col_lang = st.columns(2)
+    with col_loc:
         location = st.selectbox(
             "📍 Location",
-            options=list(LOCATION_CODES.keys()),
+            ["Italy", "United States", "United Kingdom", "Germany", "France", "Spain"],
             index=0
         )
     
-    with col2:
+    with col_lang:
         language = st.selectbox(
             "🌐 Language",
-            options=list(LANGUAGE_CODES.keys()),
+            ["Italian", "English", "German", "French", "Spanish"],
             index=0
         )
     
-    st.markdown("---")
-    
     max_sources = st.slider(
-        "📊 Max fonti AI Overview",
+        "📊 Max Sources",
         min_value=3,
         max_value=10,
         value=5,
-        help="Numero massimo di fonti AI Overview da analizzare"
+        help="Numero massimo di fonti competitor da analizzare"
     )
     
-    include_fan_out = st.checkbox(
-        "🔍 Includi analisi fan-out queries",
-        value=True,
-        help="Analizza anche le domande correlate nell'AI Overview"
-    )
+    st.divider()
     
-    st.markdown("---")
+    # ===== INFO COSTI =====
+    with st.expander("💰 Stima Costi"):
+        st.markdown(f"""
+        **Costo stimato per questa analisi:**
+        - DataForSEO: ~$0.10
+        - OpenAI: ~$0.05
+        - Jina: Gratuito
+        
+        **Totale**: ~$0.15-0.20
+        
+        **Fonti**: {max_sources}
+        """)
     
+    st.divider()
+    
+    # ===== BOTTONE ANALISI =====
     analyze_button = st.button(
-        "🚀 AVVIA ANALISI",
-        type="primary",
-        use_container_width=True
+        "🚀 Avvia Analisi",
+        use_container_width=True,
+        disabled=not (credentials_valid and target_url and keyword)
     )
+
+# ==================== ISTRUZIONI INIZIALI ====================
+if not credentials_valid:
+    st.info("👈 **Per iniziare**: Inserisci le tue API keys nella sidebar")
     
-    st.markdown("---")
-    st.caption("Powered by [Moca Interactive](https://mocainteractive.com)")
+    with st.expander("📖 Come ottenere le API Keys"):
+        st.markdown("""
+        ### 🔑 DataForSEO
+        1. Registrati su [DataForSEO](https://dataforseo.com/)
+        2. Vai su Dashboard → API Access
+        3. Copia Login e Password
+        
+        ### 🔑 OpenAI
+        1. Vai su [OpenAI Platform](https://platform.openai.com/)
+        2. Account → API Keys
+        3. Crea nuova key (sk-...)
+        
+        ### 🔑 Jina AI
+        1. Registrati su [Jina AI](https://jina.ai/)
+        2. Dashboard → API Keys
+        3. Crea nuova key (jina_...)
+        """)
+    
+    st.stop()
+
+if not (target_url and keyword):
+    st.info("👈 **Inserisci URL e Keyword** nella sidebar per continuare")
+    st.stop()
+
+# ==================== ANALISI ====================
+if analyze_button:
+    
+    # Store credentials in session state for this analysis
+    st.session_state['temp_credentials'] = {
+        'dataforseo_login': dataforseo_login,
+        'dataforseo_password': dataforseo_password,
+        'openai_key': openai_key,
+        'jina_key': jina_key,
+        'location': location,
+        'language': language
+    }
+    
+    try:
+        # Initialize controller with user credentials
+        controller = OptimizationController(
+            dataforseo_login=dataforseo_login,
+            dataforseo_password=dataforseo_password,
+            openai_api_key=openai_key,
+            jina_api_key=jina_key,
+            reranker_provider="jina"
+        )
+        
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Step 1: SERP Analysis
+        status_text.text("🔍 Step 1/7: Recupero AI Overview da Google...")
+        progress_bar.progress(10)
+        
+        # Step 2-7: ... (resto del codice di analisi come prima)
+        
+        # IMPORTANTE: Passa le credenziali al controller
+        result = controller.optimize_content(
+            target_url=target_url,
+            keyword=keyword,
+            location=location,
+            language=language,
+            max_sources=max_sources
+        )
+        
+        progress_bar.progress(100)
+        status_text.text("✅ Analisi completata!")
+        
+        # ... resto del codice per mostrare i risultati
+        
+    except Exception as e:
+        st.error(f"❌ Errore durante l'analisi: {str(e)}")
+        logger.error(f"Analisi fallita: {e}")
+        st.stop()
+    
+    finally:
+        # Clear temporary credentials from memory
+        if 'temp_credentials' in st.session_state:
+            del st.session_state['temp_credentials']
+
+# ==================== FOOTER ====================
+st.divider()
+st.markdown("""
+<div style='text-align: center; color: #8A8A8A; padding: 20px;'>
+    <p>Sviluppato da <a href='https://mocainteractive.com' target='_blank' style='color: #E52217; text-decoration: none;'><strong>Moca Interactive</strong></a></p>
+    <p style='font-size: 0.9em;'>© 2025 Moca Interactive. Tutti i diritti riservati.</p>
+</div>
+""", unsafe_allow_html=True)
 
 # ========== MAIN CONTENT ==========
 
