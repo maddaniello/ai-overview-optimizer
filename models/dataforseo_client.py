@@ -1,35 +1,44 @@
 """
-Client per DataForSEO API
-Gestisce chiamate a SERP API per recuperare AI Overview e dati organici
+DataForSEO API Client
 """
 import requests
 import base64
-from typing import Dict, List, Optional, Any
-from tenacity import retry, stop_after_attempt, wait_exponential
-from utils.logger import get_logger
+from typing import Dict, Any, Optional
+from utils.logger import logger
 from utils.rate_limiter import RateLimiter
-from config import dataforseo_config, LOCATION_CODES, LANGUAGE_CODES
-
-logger = get_logger(__name__)
+from config import DATAFORSEO_API_URL, DATAFORSEO_RATE_LIMIT
 
 class DataForSEOClient:
-    """Client per interazione con DataForSEO API"""
+    """Client per DataForSEO API"""
     
-    def __init__(self):
-        self.base_url = dataforseo_config.base_url
-        self.login = dataforseo_config.login
-        self.password = dataforseo_config.password
+    def __init__(self, login: str, password: str):
+        """
+        Inizializza client con credenziali utente
+        
+        Args:
+            login: DataForSEO login
+            password: DataForSEO password
+        """
+        self.api_url = DATAFORSEO_API_URL
+        self.login = login
+        self.password = password
         
         # Crea auth header
-        credentials = f"{self.login}:{self.password}"
-        self.auth_header = base64.b64encode(credentials.encode()).decode()
-        
+        credentials = f"{login}:{password}"
+        encoded = base64.b64encode(credentials.encode()).decode()
         self.headers = {
-            "Authorization": f"Basic {self.auth_header}",
+            "Authorization": f"Basic {encoded}",
             "Content-Type": "application/json"
         }
         
-        logger.info("DataForSEO Client inizializzato")
+        # Rate limiter
+        self.rate_limiter = RateLimiter(
+            max_calls=DATAFORSEO_RATE_LIMIT,
+            period=60,
+            name="DataForSEO"
+        )
+        
+        logger.info("DataForSEO client inizializzato")
     
     @retry(
         stop=stop_after_attempt(3),
