@@ -11,3 +11,4 @@ pydantic
 loguru
 lxml
 aiohttp
+spacy
